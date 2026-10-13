@@ -29,7 +29,7 @@ flate2 = "=1.0.35"
 toml = "=0.8.19"
 keyring = { version = "=3.6.2", features = ["sync-secret-service", "crypto-rust"] }
 tokio = { version = "=1.47.1", features = ["rt-multi-thread", "process", "time", "macros"] }
-rmcp = { version = "=0.8.5", default-features = false, features = ["client", "transport-child-process"] }
+rmcp = { version = "=0.8.5", default-features = false, features = ["client", "server", "macros", "transport-child-process"] }
 
 [profile.release]
 lto = "thin"
