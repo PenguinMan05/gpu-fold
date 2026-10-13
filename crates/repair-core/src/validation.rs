@@ -123,6 +123,7 @@ pub fn validate_proposal(root: &Path, p: &Proposal) -> Result<()> {
         );
         ensure!(
             !e.path.starts_with("tests/")
+                && !e.path.contains("/tests/")
                 && !e.old.contains("#[test]")
                 && !e.old.contains("#[cfg(test)]")
                 && !e.new.contains("#[ignore]"),

@@ -289,7 +289,11 @@ pub fn context(root: &Path, task: &str, max_chars: usize) -> Result<(String, Vec
         if map.len() < map_cap {
             map.push_str(&format!("{path}\n"));
         }
-        if path.ends_with(".rs") && ent.metadata()?.len() <= 128000 && !path.starts_with("tests/") {
+        if path.ends_with(".rs")
+            && ent.metadata()?.len() <= 128000
+            && !path.starts_with("tests/")
+            && !path.contains("/tests/")
+        {
             let text = fs::read_to_string(ent.path())?;
             if map.len() < map_cap {
                 for symbol in crate::code::outline(&text)? {

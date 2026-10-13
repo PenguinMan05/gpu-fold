@@ -20,6 +20,14 @@ fn stream_accepts_split_unicode_and_rejects_truncated_output() {
     assert!(decoder.done);
     assert_eq!(decoder.text, "café");
     assert_eq!(observed, "café");
+    let mut stopped = StreamDecoder::default();
+    stopped
+        .feed(
+            b"data: {\"choices\":[{\"finish_reason\":\"stop\"}]}\n",
+            &mut |_| {},
+        )
+        .unwrap();
+    assert!(stopped.done);
     assert!(StreamDecoder::default()
         .feed(
             b"data: {\"choices\":[{\"finish_reason\":\"length\"}]}\n",

@@ -66,6 +66,9 @@ impl StreamDecoder {
                 let v: serde_json::Value = serde_json::from_str(data)?;
                 ensure!(v.get("error").is_none(), "Model returned a streaming error");
                 let choice = &v["choices"][0];
+                if choice["finish_reason"].as_str() == Some("stop") {
+                    self.done = true;
+                }
                 ensure!(
                     choice["delta"].get("tool_calls").is_none(),
                     "Model provider tool execution is disabled"

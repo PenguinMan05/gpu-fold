@@ -45,6 +45,8 @@ jobs:
           bash scripts/build-sandbox.sh --approve-image-download
           dist/rust-repair sandbox-probe > dist/sandbox-probe.txt
           bash scripts/verify-fixture.sh
+      - name: Verify public repository pinning and preflight
+        run: dist/rust-repair new https://github.com/PenguinMan05/gpu-fold --task "Inspect repository preflight without inference or publishing" > dist/public-preflight.txt
       - name: Launch native desktop and capture it
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
