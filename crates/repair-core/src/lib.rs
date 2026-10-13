@@ -1,8 +1,11 @@
+pub mod code;
 pub mod github;
 pub mod mcp;
 pub mod model;
+pub mod probe;
 pub mod process;
 pub mod repository;
+pub mod runtime;
 pub mod sandbox;
 pub mod store;
 pub mod types;

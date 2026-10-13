@@ -1,8 +1,10 @@
 FROM docker.io/library/rust:1.90.0-slim-bookworm
+COPY scripts/sandbox-runner.rs /tmp/sandbox-runner.rs
+RUN rustc --edition=2021 -O /tmp/sandbox-runner.rs -o /usr/local/bin/repair-sandbox && rm /tmp/sandbox-runner.rs
 RUN chmod -R a+rX /usr/local/rustup /usr/local/cargo
 ENV RUSTUP_HOME=/usr/local/rustup
 ENV CARGO_HOME=/tmp/cargo
 ENV HOME=/tmp
 USER 65534:65534
-WORKDIR /workspace
-ENTRYPOINT ["/usr/local/cargo/bin/cargo"]
+WORKDIR /tmp
+ENTRYPOINT ["/usr/local/bin/repair-sandbox"]

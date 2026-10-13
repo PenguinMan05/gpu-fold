@@ -6,6 +6,7 @@
   fixture_run="$("$cli" fixture)"
   "$cli" import-proposal "$fixture_run" fixtures/fix-add.json
   "$cli" approve-plan "$fixture_run"
+  "$cli" baseline "$fixture_run" --approve-downloads-and-code-execution
   "$cli" apply "$fixture_run" --reviewed-patch
   "$cli" test "$fixture_run" --approve-downloads-and-code-execution
   mkdir -p dist
