@@ -1,0 +1,65 @@
+{
+  "date": "2026-10-13",
+  "scope": "Static parsing only; Rust compilation and runtime tests not executed.",
+  "checks": [
+    {
+      "path": "Cargo.toml",
+      "check": "TOML parse",
+      "pass": true
+    },
+    {
+      "path": "crates/repair-cli/Cargo.toml",
+      "check": "TOML parse",
+      "pass": true
+    },
+    {
+      "path": "crates/repair-core/Cargo.toml",
+      "check": "TOML parse",
+      "pass": true
+    },
+    {
+      "path": "crates/repair-desktop/Cargo.toml",
+      "check": "TOML parse",
+      "pass": true
+    },
+    {
+      "path": "fixtures/fixture-add/Cargo.toml",
+      "check": "TOML parse",
+      "pass": true
+    },
+    {
+      "path": "fixtures/fix-add.json",
+      "check": "JSON parse",
+      "pass": true
+    },
+    {
+      "path": "fixtures/mcp.example.json",
+      "check": "JSON parse",
+      "pass": true
+    },
+    {
+      "path": "scripts/build-linux.sh",
+      "check": "bash syntax",
+      "pass": true
+    },
+    {
+      "path": "scripts/build-sandbox.sh",
+      "check": "bash syntax",
+      "pass": true
+    },
+    {
+      "path": "scripts/package-deb.sh",
+      "check": "bash syntax",
+      "pass": true
+    },
+    {
+      "path": "scripts/verify-fixture.sh",
+      "check": "bash syntax",
+      "pass": true
+    },
+    {
+      "check": "design PDF included",
+      "pass": true
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "my-approved-server": {
+      "command": "/absolute/path/to/a/trusted/mcp-server",
+      "args": [],
+      "env": {}
+    }
+  }
+}

@@ -1,0 +1,8 @@
+FROM docker.io/library/rust:1.90.0-slim-bookworm
+RUN chmod -R a+rX /usr/local/rustup /usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV CARGO_HOME=/tmp/cargo
+ENV HOME=/tmp
+USER 65534:65534
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/cargo/bin/cargo"]

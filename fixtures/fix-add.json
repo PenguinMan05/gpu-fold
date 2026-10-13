@@ -1,0 +1,13 @@
+{
+  "explanation": "The add function subtracts the second operand. Replace subtraction with addition, using a test that fails with 5 + 2 before the patch.",
+  "citations": [{"path": "src/lib.rs", "start_line": 1, "snippet": "pub fn add(a: u32, b: u32) -> u32 { a - b }"}],
+  "planned_files": ["src/lib.rs"],
+  "edits": [{"path": "src/lib.rs", "old": "a - b", "new": "a + b"}],
+  "reproduction": {
+    "path": "tests/repair_add.rs",
+    "content": "#[test]\nfn repair_add() { assert_eq!(fixture_add::add(5, 2), 7, \"REPAIR_ADD_WRONG_RESULT\"); }\n",
+    "test_name": "repair_add",
+    "failure_marker": "REPAIR_ADD_WRONG_RESULT"
+  },
+  "no_fix": false
+}

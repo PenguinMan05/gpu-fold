@@ -1,0 +1,6 @@
+# Trusted dependency-free benchmark fixture.
+version = 3
+
+[[package]]
+name = "fixture_add"
+version = "0.1.0"
