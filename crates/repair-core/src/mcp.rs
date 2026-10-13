@@ -147,28 +147,27 @@ fn command(s: &Server, workspace: &Path) -> Result<tokio::process::Command> {
     Ok(c)
 }
 pub fn inspect(s: &Server, workspace: &Path, consent: bool) -> Result<Vec<ToolPin>> {
+    inspect_cancel(s, workspace, consent, &process::cancel_token())
+}
+pub fn inspect_cancel(
+    s: &Server,
+    workspace: &Path,
+    consent: bool,
+    cancel: &process::Cancel,
+) -> Result<Vec<ToolPin>> {
     ensure!(consent, "Server launch consent required");
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
-        let transport = bounded_child(s, workspace)?;
-        let service = tokio::time::timeout(Duration::from_secs(15), ().serve(transport)).await??;
-        let tools =
-            tokio::time::timeout(Duration::from_secs(15), service.list_all_tools()).await??;
-        ensure!(tools.len() <= 100, "MCP tool count over cap");
-        let mut out = vec![];
-        for t in tools {
-            let definition = serde_json::to_value(&t)?;
-            let bytes = serde_json::to_vec(&definition)?;
-            ensure!(bytes.len() <= 64000, "Tool definition too large");
-            out.push(ToolPin {
-                name: t.name.to_string(),
-                hash: validation::digest(&bytes),
-                definition,
-            });
-        }
-        service.cancel().await?;
-        Ok(out)
-    })
+  let operation=async {
+   let transport=bounded_child(s,workspace)?;
+   let service=tokio::time::timeout(Duration::from_secs(15),().serve(transport)).await??;
+   let tools=tokio::time::timeout(Duration::from_secs(15),service.list_all_tools()).await??;
+   ensure!(tools.len()<=100,"MCP tool count over cap");let mut out=vec![];
+   for t in tools {let definition=serde_json::to_value(&t)?;let bytes=serde_json::to_vec(&definition)?;ensure!(bytes.len()<=64000,"Tool definition too large");out.push(ToolPin{name:t.name.to_string(),hash:validation::digest(&bytes),definition});}
+   service.cancel().await?;Ok(out)
+  };
+  tokio::select!{result=operation=>result,_=cancelled(cancel)=>Err(anyhow::anyhow!("MCP discovery cancelled"))}
+ })
 }
 fn local_refs_only(value: &Value) -> Result<()> {
     match value {
@@ -245,6 +244,16 @@ pub fn call(
     args: Map<String, Value>,
     consent: bool,
 ) -> Result<String> {
+    call_cancel(s, workspace, pin, args, consent, &process::cancel_token())
+}
+pub fn call_cancel(
+    s: &Server,
+    workspace: &Path,
+    pin: &ToolPin,
+    args: Map<String, Value>,
+    consent: bool,
+    cancel: &process::Cancel,
+) -> Result<String> {
     ensure!(consent, "Per-call tool consent required");
     local_refs_only(&pin.definition)?;
     let schema = jsonschema::JSONSchema::compile(&pin.definition["inputSchema"])
@@ -263,7 +272,7 @@ pub fn call(
         "MCP payload over cap"
     );
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async {
+    rt.block_on(async {let operation=async {
         let service = tokio::time::timeout(
             Duration::from_secs(15),
             ().serve(bounded_child(s, workspace)?),
@@ -291,5 +300,14 @@ pub fn call(
         ensure!(text.len() <= 64000, "Tool result exceeds cap");
         service.cancel().await?;
         Ok(process::scrub(&text))
-    })
+    };tokio::select!{result=operation=>result,_=cancelled(cancel)=>Err(anyhow::anyhow!("MCP call cancelled"))}})
+}
+
+async fn cancelled(cancel: &process::Cancel) {
+    loop {
+        if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }

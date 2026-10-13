@@ -132,6 +132,12 @@ pub fn create(
         Duration::from_secs(120),
         cancel,
     )?)?;
+    // Git archive must preserve original blobs: repository export attributes cannot omit or rewrite files.
+    fs::create_dir_all(runroot.join("cache.git/info"))?;
+    fs::write(
+        runroot.join("cache.git/info/attributes"),
+        "* -export-ignore -export-subst\n** -export-ignore -export-subst\n",
+    )?;
     let archive = runroot.join("source.tar");
     let mut cmd = process::git();
     cmd.arg("--git-dir")

@@ -4,14 +4,14 @@
   set -euo pipefail
   cd "$(dirname "${BASH_SOURCE[0]}")/.."
   if ! command -v cargo >/dev/null 2>&1; then
-    echo "ERROR: Rust/Cargo is required. Install Rust 1.85+ with rustup, then run this script again."
+    echo "ERROR: Rust/Cargo is required. Install Rust 1.90+ with rustup, then run this script again."
     exit 2
   fi
-  cargo generate-lockfile
-  cargo fmt --all
-  cargo test -p repair-core
-  cargo check --workspace
-  cargo build --release --workspace
+  test -f Cargo.lock
+  cargo fmt --all --check
+  cargo test --locked -p repair-core
+  cargo check --locked --workspace
+  cargo build --locked --release --workspace
   mkdir -p dist
   cp target/release/rust-repair target/release/rust-repair-desktop dist/
   ./dist/rust-repair --version

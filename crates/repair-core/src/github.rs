@@ -133,6 +133,30 @@ pub fn token() -> Result<String> {
         .get_password()
         .context("Sign in before publishing")?)
 }
+pub fn recorded_pr_open(url: &str) -> Result<bool> {
+    let url = reqwest::Url::parse(url)?;
+    ensure!(
+        url.scheme() == "https" && url.host_str() == Some("github.com"),
+        "Invalid recorded PR URL"
+    );
+    let parts = url
+        .path_segments()
+        .context("Invalid PR path")?
+        .collect::<Vec<_>>();
+    ensure!(
+        parts.len() == 4 && parts[2] == "pull" && parts[3].parse::<u64>().is_ok(),
+        "Invalid recorded PR URL"
+    );
+    let value = response(
+        client()?
+            .get(format!(
+                "https://api.github.com/repos/{}/{}/pulls/{}",
+                parts[0], parts[1], parts[3]
+            ))
+            .send()?,
+    )?;
+    Ok(value["state"].as_str() == Some("open"))
+}
 pub fn revoke_local() -> Result<()> {
     keyring::Entry::new("local-rust-repair", "github")?.delete_credential()?;
     Ok(())

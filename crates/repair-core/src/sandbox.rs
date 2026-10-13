@@ -260,6 +260,57 @@ impl SandboxRunner for PodmanRunner {
             "/usr/local/bin/repair-sandbox",
             image,
         ]);
+        process::check(cancel)?;
+        let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let client_cancel = process::cancel_token();
+        let watch_client = client_cancel.clone();
+        let done = finished.clone();
+        let stop = cancel.clone();
+        let container = name.clone();
+        let watcher = std::thread::spawn(move || -> Result<()> {
+            let start = std::time::Instant::now();
+            while !done.load(std::sync::atomic::Ordering::SeqCst)
+                && !stop.load(std::sync::atomic::Ordering::SeqCst)
+                && start.elapsed() < Duration::from_secs(600)
+            {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            if done.load(std::sync::atomic::Ordering::SeqCst) {
+                return Ok(());
+            }
+            // Stop the container before terminating the Podman client, preserving its cleanup path.
+            let mut kill = podman();
+            kill.args(["kill", "--signal", "KILL", &container]);
+            let _ = process::run(
+                kill,
+                vec!["podman kill owned sandbox".into()],
+                Duration::from_secs(2),
+                &process::cancel_token(),
+            );
+            let mut remove = podman();
+            remove.args(["rm", "--force", "--time", "0", &container]);
+            let cleanup = process::run(
+                remove,
+                vec!["podman remove owned sandbox".into()],
+                Duration::from_secs(2),
+                &process::cancel_token(),
+            );
+            watch_client.store(true, std::sync::atomic::Ordering::SeqCst);
+            let mut exists = podman();
+            exists.args(["container", "exists", &container]);
+            let remaining = process::run(
+                exists,
+                vec!["podman check sandbox cleanup".into()],
+                Duration::from_secs(2),
+                &process::cancel_token(),
+            )?;
+            ensure!(
+                remaining.exit_code == Some(1),
+                "Sandbox cleanup failed: {:?}",
+                cleanup.map(|o| o.output)
+            );
+            Ok(())
+        });
         let result = process::run(
             c,
             vec![
@@ -271,19 +322,18 @@ impl SandboxRunner for PodmanRunner {
                 "--".into(),
                 "--test-threads=1".into(),
             ],
-            Duration::from_secs(600),
-            cancel,
+            Duration::from_secs(610),
+            &client_cancel,
         );
-        if result.is_err() {
-            let mut cleanup = podman();
-            cleanup.args(["rm", "--force", &name]);
-            let _ = process::run(
-                cleanup,
-                vec!["podman stop sandbox".into()],
-                Duration::from_secs(10),
-                &process::cancel_token(),
-            );
-        }
+        finished.store(true, std::sync::atomic::Ordering::SeqCst);
+        watcher
+            .join()
+            .map_err(|_| anyhow::anyhow!("Sandbox cleanup worker failed"))??;
+        ensure!(
+            !client_cancel.load(std::sync::atomic::Ordering::SeqCst)
+                && !cancel.load(std::sync::atomic::Ordering::SeqCst),
+            "Sandbox cancelled or exceeded time budget; container removed"
+        );
         result
     }
 }

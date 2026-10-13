@@ -228,7 +228,13 @@ impl Engine {
         r.mcp_approvals.push(approval);
         self.store.save(r)
     }
-    pub fn requested_tool(&self, r: &mut Run, index: usize, approve_call: bool) -> Result<()> {
+    pub fn requested_tool(
+        &self,
+        r: &mut Run,
+        index: usize,
+        approve_call: bool,
+        cancel: &process::Cancel,
+    ) -> Result<()> {
         let _lock = self.lock(r)?;
         ensure!(
             r.state == State::AwaitTools,
@@ -266,12 +272,13 @@ impl Engine {
             &serde_json::Value::Object(request.arguments.clone()),
             &r.root.join("work"),
         )?;
-        let output = crate::mcp::call(
+        let output = crate::mcp::call_cancel(
             server,
             &r.root.join("work"),
             &approval.pin,
             request.arguments.clone(),
             true,
+            cancel,
         )?;
         r.tool_results.push(format!(
             "BEGIN UNTRUSTED MCP RESULT {} / {}\nArguments: {}\n{}\nEND UNTRUSTED MCP RESULT",
@@ -516,7 +523,18 @@ impl Engine {
                 < 3,
             "Daily publication limit reached"
         );
-        ensure!(!history.iter().any(|old|old.pr_url.is_some()&&old.owner==r.owner&&old.repo==r.repo),"A previously published app PR exists for this repository; close/review it before another (0.1.0 conservatively blocks repeats)");
+        for old in history
+            .iter()
+            .filter(|old| old.owner == r.owner && old.repo == r.repo)
+        {
+            if let Some(url) = &old.pr_url {
+                ensure!(
+                    !github::recorded_pr_open(url)?,
+                    "An open app pull request already exists for this repository"
+                );
+            }
+        }
+
         // Save intent before remote effects. A failed or interrupted publish is not automatically retried.
         self.transition(r, State::Publishing)?;
         let mut candidate = r.clone();
@@ -532,6 +550,26 @@ impl Engine {
                 Err(e)
             }
         }
+    }
+    pub fn delete_workspace(&self, r: &mut Run) -> Result<()> {
+        let _lock = self.lock(r)?;
+        ensure!(
+            !matches!(
+                r.state,
+                State::Analyzing | State::Verifying | State::Publishing
+            ),
+            "Stop active work before deleting its workspace"
+        );
+        ensure!(
+            r.root.canonicalize()?.parent()
+                == Some(self.store.root.join("runs").canonicalize()?.as_path()),
+            "Workspace outside the run directory"
+        );
+        std::fs::remove_dir_all(&r.root)?;
+        r.notes
+            .push("Workspace deleted by user; history and publication metadata retained".into());
+        r.updated = now();
+        self.store.save(r)
     }
     pub fn export(&self, r: &Run, destination: &Path) -> Result<()> {
         self.store.export(r, destination)

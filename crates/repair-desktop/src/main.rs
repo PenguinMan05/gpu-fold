@@ -446,9 +446,9 @@ impl App {
                         let r = r.clone();
                         let consent = self.tool_consent;
                         self.tool_consent = false;
-                        self.job(move |e, _| {
+                        self.job(move |e, c| {
                             let mut r = r;
-                            e.requested_tool(&mut r, i, consent)?;
+                            e.requested_tool(&mut r, i, consent, &c)?;
                             Ok(JobResult::Run(r))
                         });
                         return;
@@ -960,9 +960,11 @@ impl App {
             .clicked()
         {
             let workspace = self.engine.store.root.join("mcp-workspace");
-            self.job(move |_, _| {
+            self.job(move |_, c| {
                 std::fs::create_dir_all(&workspace)?;
-                Ok(JobResult::Tools(mcp::inspect(&srv, &workspace, true)?))
+                Ok(JobResult::Tools(mcp::inspect_cancel(
+                    &srv, &workspace, true, &c,
+                )?))
             });
             return;
         }
@@ -1067,8 +1069,8 @@ impl App {
                         Ok(args) => {
                             let workspace = self.engine.store.root.join("mcp-workspace");
                             self.tool_consent = false;
-                            self.job(move |_, _| {
-                                let out = mcp::call(&srv, &workspace, &pin, args, true)?;
+                            self.job(move |_, c| {
+                                let out = mcp::call_cancel(&srv, &workspace, &pin, args, true, &c)?;
                                 Ok(JobResult::Message(format!("UNTRUSTED MCP RESULT\n{out}")))
                             });
                         }
@@ -1083,6 +1085,20 @@ impl App {
         match self.engine.store.list() {
             Ok(runs) => {
                 for r in runs {
+                    if r.root.exists()
+                        && ui
+                            .button(format!("Delete workspace {} (retain history)", r.id))
+                            .clicked()
+                    {
+                        self.job(move |e, _| {
+                            let mut r = r;
+                            e.delete_workspace(&mut r)?;
+                            Ok(JobResult::Message(
+                                "Workspace deleted; history and PR metadata retained.".into(),
+                            ))
+                        });
+                        return;
+                    }
                     if ui
                         .button(format!(
                             "{} - {}/{} - {:?} - level {}",

@@ -74,7 +74,7 @@ pub fn sandbox_probe(root: &Path, settings: &Settings, cancel: &process::Cancel)
         .join()
         .map_err(|_| anyhow::anyhow!("Cancel timer failed"))?;
     ensure!(
-        stopped.is_err() && start.elapsed() < Duration::from_secs(15),
+        stopped.is_err() && start.elapsed() < Duration::from_secs(9),
         "Sandbox cancellation exceeded cleanup budget"
     );
     ensure!(
