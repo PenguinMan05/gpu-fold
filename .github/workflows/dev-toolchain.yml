@@ -1,0 +1,25 @@
+name: Prepare offline verification tools
+on:
+  push:
+    paths: [.github/workflows/dev-toolchain.yml]
+permissions:
+  contents: read
+jobs:
+  tools:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo fetch
+      - name: Bundle public compiler and dependency sources
+        run: |
+          mkdir -p /tmp/verification-tools
+          cp -a "$HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu" /tmp/verification-tools/toolchain
+          cp -a "$HOME/.cargo/registry" /tmp/verification-tools/registry
+          tar -czf /tmp/verification-tools.tar.gz -C /tmp/verification-tools .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: offline-verification-tools
+          path: /tmp/verification-tools.tar.gz
+          retention-days: 1
