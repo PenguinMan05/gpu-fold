@@ -125,7 +125,9 @@ fn command(s: &Server, workspace: &Path) -> Result<tokio::process::Command> {
     if s.url.is_some() {
         bail!("Remote MCP is disabled in 0.1.0; only explicitly approved local stdio servers are supported")
     }
-    let exe = Path::new(s.command.as_deref().context("Missing command")?);
+    let name = s.command.as_deref().context("Missing command")?;
+    let resolved = resolve_program(name)?;
+    let exe = resolved.as_path();
     ensure!(
         exe.is_absolute() && exe.is_file(),
         "MCP command must be an absolute executable path"
@@ -145,6 +147,24 @@ fn command(s: &Server, workspace: &Path) -> Result<tokio::process::Command> {
         c.env(k, v);
     }
     Ok(c)
+}
+pub fn resolve_program(name: &str) -> Result<std::path::PathBuf> {
+    let path = Path::new(name);
+    if path.is_absolute() {
+        ensure!(path.is_file(), "MCP executable missing");
+        return Ok(path.to_path_buf());
+    }
+    ensure!(
+        !name.is_empty() && !name.starts_with('-') && !name.contains('/') && !name.contains('\\'),
+        "Use a program name or absolute executable path"
+    );
+    for directory in ["/usr/local/bin", "/usr/bin", "/bin"] {
+        let candidate = Path::new(directory).join(name);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    bail!("Program {name} is not in the fixed trusted PATH; supply its absolute path")
 }
 pub fn inspect(s: &Server, workspace: &Path, consent: bool) -> Result<Vec<ToolPin>> {
     inspect_cancel(s, workspace, consent, &process::cancel_token())

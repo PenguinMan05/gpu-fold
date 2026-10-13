@@ -333,15 +333,31 @@ impl Engine {
             std::fs::remove_dir_all(&work)?;
         }
         repository::copy_tree(&r.root.join("pristine"), &work)?;
+        let no_fix = p.no_fix;
+        let tools_pending = !p.tool_requests.is_empty();
         r.proposal = Some(p);
         r.evidence = Evidence {
-            level: 1,
-            reason: "User-edited proposal; source citations verified, tests must run again".into(),
+            level: if no_fix || tools_pending { 0 } else { 1 },
+            reason: if no_fix {
+                "No fix proposed"
+            } else {
+                "User-edited proposal; previous test evidence invalidated"
+            }
+            .into(),
             ..Default::default()
         };
         r.notes
             .push("User edited proposal; prior evidence invalidated".into());
-        self.transition(r, State::AwaitPlan)
+        self.transition(
+            r,
+            if no_fix {
+                State::NoFix
+            } else if tools_pending {
+                State::AwaitTools
+            } else {
+                State::AwaitPlan
+            },
+        )
     }
     pub fn approve_plan(&self, r: &mut Run) -> Result<()> {
         let _lock = self.lock(r)?;

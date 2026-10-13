@@ -51,3 +51,11 @@ fn paths_and_disabled_consent_are_enforced() {
     assert!(validation::safe_path("src/./lib.rs").is_err());
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn programs_resolve_only_through_fixed_path() {
+    assert!(mcp::resolve_program("sh").unwrap().is_absolute());
+    assert!(mcp::resolve_program("../sh").is_err());
+    assert!(mcp::resolve_program("-c").is_err());
+    assert!(mcp::resolve_program("./repo-program").is_err());
+}

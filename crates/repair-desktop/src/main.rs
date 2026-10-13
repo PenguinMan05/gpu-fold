@@ -628,7 +628,7 @@ impl App {
             }
             return;
         }
-        if r.state == State::Review && r.evidence.level == 3 {
+        if r.state == State::Review && r.evidence.level == 3 && r.owner != "LOCAL_FIXTURE" {
             ui.separator();
             ui.heading("Publish one draft pull request");
             ui.label("Read the project's rules above. Policy interpretation is yours; the model cannot approve this checklist.");

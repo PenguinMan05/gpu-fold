@@ -4,7 +4,7 @@ The supplied design remains the specification. A compiled application and a synt
 
 | Design section | Implementation and verification |
 |---|---|
-| 1–3: local app, issue and sweep modes | Rust eframe desktop, anonymous public-repository preflight, bounded findings-only sweep, reviewed issue patches. Native launch is a CI gate. |
+| 1–3: local app, issue and sweep modes | Rust eframe desktop, anonymous public-repository preflight, bounded findings-only sweep, reviewed issue patches. Native launch, screenshot and Debian installation passed in CI run 38466534425. |
 | 4: engine, persisted state and budgets | UI-independent library and CLI, SQLite transitions, per-run file locks, cancellation, restart recovery, three proposal attempts, ten MCP results. Regression tests run locally and in CI. |
 | 5: local AI | Literal-loopback provider, streaming JSON output, managed installed mistralrs process, explicit load/unload and CPU selection, tokenizer budgeting, deterministic request parameters and cancellation. Adapter tests use a mock local server. Actual CUDA/model performance requires a model and GPU. |
 | 5: source and patch validity | Rust tree-sitter outlines, bounded retrieval, verbatim citations, unique replacements, five-file/150-line cap, syntax and existing-test preservation, source integrity checks. Regression tests pass. |

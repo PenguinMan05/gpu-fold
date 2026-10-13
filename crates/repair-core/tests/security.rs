@@ -209,3 +209,18 @@ fn fixture_cannot_be_published() {
     };
     assert!(github::check_publish(&run, &approval).is_err());
 }
+
+#[test]
+fn edited_no_fix_stops_without_patch_approval() {
+    let f = Fixture::new();
+    let engine = repair_core::Engine::new(Store::open(f.0.join("data")).unwrap());
+    let mut run = engine.fixture().unwrap();
+    let mut p = proposal();
+    p.no_fix = true;
+    p.edits.clear();
+    p.reproduction = None;
+    engine.replace_proposal(&mut run, p).unwrap();
+    assert_eq!(run.state, State::NoFix);
+    assert_eq!(run.evidence.level, 0);
+    assert!(engine.approve_plan(&mut run).is_err());
+}
