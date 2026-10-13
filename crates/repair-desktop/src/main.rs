@@ -310,7 +310,11 @@ impl App {
                                 .strong()
                                 .color(egui::Color32::from_rgb(76, 103, 164)),
                         );
-                        ui.strong(title);
+                        ui.label(
+                            egui::RichText::new(title)
+                                .strong()
+                                .color(egui::Color32::from_rgb(35, 48, 74)),
+                        );
                         ui.label(detail);
                     });
             }
