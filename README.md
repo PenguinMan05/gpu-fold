@@ -27,7 +27,7 @@ bash scripts/build-sandbox.sh --approve-image-download
 
 ## What has been checked
 
-The workspace compiles and 27 local regression tests pass, including desktop approval and setup checks. GitHub CI has executed the real rootless known-bug workflow to level 3 and a sandbox isolation probe. CI also gates the native desktop launch, screenshot and package build; download binaries from a successful run rather than a failed artifact.
+The workspace compiles and 28 regression tests pass, including desktop approval, sandbox setup, and stale MCP configuration checks. GitHub CI has executed the real rootless known-bug workflow to level 3 and a sandbox isolation probe. CI also gates the native desktop launch, screenshot and package build; download binaries from a successful run rather than a failed artifact.
 
 The tests verify application behavior, not the accuracy of a coding model. Actual RTX 4070 inference, the design's real-world benchmark and live app-driven OAuth/fork/pull-request operations have not yet been verified. See [design acceptance](docs/DESIGN_ACCEPTANCE.md) for the full implemented/remaining distinction.
 

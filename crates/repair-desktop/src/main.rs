@@ -61,6 +61,7 @@ struct App {
     mcp_path: String,
     mcp_config: Option<mcp::Config>,
     mcp_config_path: Option<PathBuf>,
+    mcp_config_hash: Option<String>,
     mcp_name: String,
     mcp_consent: bool,
     tools: Vec<mcp::ToolPin>,
@@ -110,6 +111,7 @@ impl App {
             mcp_path: String::new(),
             mcp_config: None,
             mcp_config_path: None,
+            mcp_config_hash: None,
             mcp_name: String::new(),
             mcp_consent: false,
             tools: vec![],
@@ -1170,23 +1172,33 @@ impl App {
         if ui.button("Import (does not launch anything)").clicked() {
             let path = PathBuf::from(&self.mcp_path);
             match mcp::import(&path) {
-                Ok(c) => {
-                    self.mcp_name = c.servers.keys().next().cloned().unwrap_or_default();
-                    self.mcp_config = Some(c);
-                    self.mcp_config_path = path.canonicalize().ok();
-                    self.tools.clear();
-                    self.mcp_consent = false;
-                    self.tool_pinned = false;
-                    self.message = "Configuration imported; original file not changed".into()
-                }
+                Ok(config) => match (path.canonicalize(), std::fs::read(&path)) {
+                    (Ok(canonical), Ok(contents)) => {
+                        self.mcp_name = config.servers.keys().next().cloned().unwrap_or_default();
+                        self.mcp_config = Some(config);
+                        self.mcp_config_path = Some(canonical);
+                        self.mcp_config_hash = Some(repair_core::validation::digest(&contents));
+                        self.tools.clear();
+                        self.mcp_consent = false;
+                        self.tool_pinned = false;
+                        self.message = "Configuration imported; original file not changed".into();
+                    }
+                    (Err(error), _) | (_, Err(error)) => self.message = error.to_string(),
+                },
                 Err(e) => self.message = e.to_string(),
             }
         }
-        if let Some(imported_path) = &self.mcp_config_path {
-            if PathBuf::from(&self.mcp_path).canonicalize().ok().as_ref() != Some(imported_path) {
+        if let (Some(imported_path), Some(imported_hash)) =
+            (&self.mcp_config_path, &self.mcp_config_hash)
+        {
+            if !mcp_config_is_current(
+                PathBuf::from(&self.mcp_path).as_path(),
+                imported_path,
+                imported_hash,
+            ) {
                 ui.colored_label(
                     egui::Color32::from_rgb(173, 92, 36),
-                    "The file path changed after import. Reimport this file before reviewing or launching a server.",
+                    "This file changed after import. Reimport it before reviewing or launching a server.",
                 );
                 return;
             }
@@ -1480,6 +1492,19 @@ fn sandbox_script() -> Option<PathBuf> {
     development.is_file().then_some(development)
 }
 
+fn mcp_config_is_current(
+    path: &std::path::Path,
+    imported_path: &std::path::Path,
+    imported_hash: &str,
+) -> bool {
+    if path.canonicalize().ok().as_deref() != Some(imported_path) {
+        return false;
+    }
+    std::fs::read(path)
+        .ok()
+        .is_some_and(|contents| repair_core::validation::digest(&contents) == imported_hash)
+}
+
 fn main() -> eframe::Result<()> {
     let store = Store::open(store::default_root()).unwrap_or_else(|e| {
         eprintln!("Cannot open local store: {e}");
@@ -1526,7 +1551,7 @@ fn main() -> eframe::Result<()> {
 
 #[cfg(test)]
 mod ui_tests {
-    use super::{runtime_approval_key, sandbox_script};
+    use super::{mcp_config_is_current, runtime_approval_key, sandbox_script};
     use repair_core::types::Settings;
 
     #[test]
@@ -1562,5 +1587,27 @@ mod ui_tests {
     #[test]
     fn sandbox_setup_script_is_available_for_a_source_checkout() {
         assert!(sandbox_script().is_some());
+    }
+
+    #[test]
+    fn changed_mcp_file_must_be_reimported_before_server_launch() {
+        let root = std::env::temp_dir().join(format!(
+            "rust-repair-mcp-ui-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("mcp.json");
+        std::fs::write(&path, br#"{"mcpServers":{}}"#).unwrap();
+        let canonical = path.canonicalize().unwrap();
+        let approved_hash = repair_core::validation::digest(&std::fs::read(&path).unwrap());
+        assert!(mcp_config_is_current(&path, &canonical, &approved_hash));
+
+        std::fs::write(&path, br#"{"mcpServers":{"changed":{}}}"#).unwrap();
+        assert!(!mcp_config_is_current(&path, &canonical, &approved_hash));
+        let _ = std::fs::remove_dir_all(root);
     }
 }
