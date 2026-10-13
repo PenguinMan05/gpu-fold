@@ -13,15 +13,13 @@ bash scripts/build-linux.sh --install
 The native application is **Rust Repair**. The headless executable is `rust-repair`.
 
 1. Open **Home → Try the known-bug demo** to practice the review workflow without an AI model. It uses a supplied, clearly identified synthetic proposal and cannot publish.
-2. Prepare the sandbox once as your regular Linux user:
+2. On Home, check the sandbox setup approval and click **Prepare test sandbox**. The app runs the bundled setup script as your regular user. It explicitly downloads the official Rust container base the first time; later repository test runs do not download images. From a terminal you can run:
 
 ```bash
 bash scripts/build-sandbox.sh --approve-image-download
 ```
 
-For a `.deb` installation the same script is at `/usr/share/rust-repair/scripts/build-sandbox.sh`. This explicitly downloads the official Rust container base; normal test runs never pull an image.
-
-3. In **Model & settings**, select your installed `mistralrs` executable and complete local model folder, or enter an existing local OpenAI-compatible endpoint. Select the matching `tokenizer.json` for accurate budgeting and record the model license. Choose CPU mode if needed. Review the command and click **Load local model**, then **Check local model connection**. A single discovered model ID is selected automatically.
+3. In **Model & settings**, select your installed `mistralrs` executable and complete local model folder, or enter an existing local OpenAI-compatible endpoint. Select the matching `tokenizer.json` for accurate budgeting and record the model license. Choose CPU mode if needed. Review and approve the displayed launch command, then click **Load local model** and **Check local model connection**. Any change to the executable, model, endpoint, CPU option, or context limits requires fresh approval. A single discovered model ID is selected automatically.
 4. Optionally import your Desktop MCP JSON in **MCP**. Import does not launch anything. Review server and tool definitions, classify tools yourself, and allow specific tools in a repair run. MCP provides tools, not model weights.
 5. In **Task**, enter a public repository and an open issue or specific bug. Preview the exact source scope, then analyze. A bug sweep produces findings only.
 6. Review and approve the plan. Run the original-source baseline twice, review every changed file and reproduction test, apply the patch locally, and run verification. Failed verification can feed a bounded revision attempt.
@@ -29,7 +27,7 @@ For a `.deb` installation the same script is at `/usr/share/rust-repair/scripts/
 
 ## What has been checked
 
-The workspace compiles and 25 local regression tests pass. GitHub CI has executed the real rootless known-bug workflow to level 3 and a sandbox isolation probe. CI also gates the native desktop launch, screenshot and package build; download binaries from a successful run rather than a failed artifact.
+The workspace compiles and 27 local regression tests pass, including desktop approval and setup checks. GitHub CI has executed the real rootless known-bug workflow to level 3 and a sandbox isolation probe. CI also gates the native desktop launch, screenshot and package build; download binaries from a successful run rather than a failed artifact.
 
 The tests verify application behavior, not the accuracy of a coding model. Actual RTX 4070 inference, the design's real-world benchmark and live app-driven OAuth/fork/pull-request operations have not yet been verified. See [design acceptance](docs/DESIGN_ACCEPTANCE.md) for the full implemented/remaining distinction.
 

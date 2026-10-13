@@ -26,7 +26,7 @@ jobs:
           name: resolved-lockfile
           path: Cargo.lock
       - name: Engine regression tests
-        run: cargo test --locked -p repair-core
+        run: cargo test --locked --workspace
       - name: Check workspace
         run: cargo check --locked --workspace
       - name: Build CLI and desktop

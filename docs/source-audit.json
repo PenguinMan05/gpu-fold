@@ -1,6 +1,6 @@
 {
   "date": "2026-10-13",
-  "scope": "Static parsing only; Rust compilation and runtime tests not executed.",
+  "scope": "Historical static parsing and manifest checks. Current build, runtime and sandbox evidence is in VERIFICATION.md; design acceptance and remaining items are in DESIGN_ACCEPTANCE.md. The original PDF is not part of this source repository.",
   "checks": [
     {
       "path": "Cargo.toml",
@@ -55,10 +55,6 @@
     {
       "path": "scripts/verify-fixture.sh",
       "check": "bash syntax",
-      "pass": true
-    },
-    {
-      "check": "design PDF included",
       "pass": true
     }
   ]

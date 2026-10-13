@@ -1,3 +1,4 @@
+use anyhow::Context;
 use eframe::egui;
 use repair_core::{github, mcp, process, store, types::*, Engine, Store};
 use std::{
@@ -50,7 +51,8 @@ struct App {
     token: String,
     device: Option<github::DeviceCode>,
     last_poll: u64,
-    runtime_consent: bool,
+    runtime_approval: Option<String>,
+    sandbox_consent: bool,
     context_preview: String,
     gpu_live: bool,
     gpu_status: String,
@@ -58,6 +60,7 @@ struct App {
     gpu_poll: std::time::Instant,
     mcp_path: String,
     mcp_config: Option<mcp::Config>,
+    mcp_config_path: Option<PathBuf>,
     mcp_name: String,
     mcp_consent: bool,
     tools: Vec<mcp::ToolPin>,
@@ -70,7 +73,52 @@ struct App {
 impl App {
     fn new(engine: Engine) -> Self {
         let settings = engine.store.settings().unwrap_or_default();
-        Self{engine,page:Page::Home,settings,url:String::new(),task:String::new(),issue:String::new(),sweep:false,run:None,proposal_json:String::new(),edit_proposal:false,message:"Choose a repository to begin. All changes remain local until you approve publishing.".into(),pending:None,cancel:process::cancel_token(),approve_exec:false,reviewed:BTreeSet::new(),rules:false,duplicates:false,issue_rule:false,responsibility:false,title:String::new(),body:String::new(),signoff:false,confirm_publish:false,token:String::new(),device:None,last_poll:0,runtime_consent:false,context_preview:String::new(),gpu_live:false,gpu_status:String::new(),gpu_rx:None,gpu_poll:std::time::Instant::now(),mcp_path:String::new(),mcp_config:None,mcp_name:String::new(),mcp_consent:false,tools:vec![],tool_index:0,tool_args:"{}".into(),tool_consent:false,tool_pinned:false,tool_readonly:true}
+        Self {
+            engine,
+            page: Page::Home,
+            settings,
+            url: String::new(),
+            task: String::new(),
+            issue: String::new(),
+            sweep: false,
+            run: None,
+            proposal_json: String::new(),
+            edit_proposal: false,
+            message: "Choose a repository to begin. All changes remain local until you approve publishing.".into(),
+            pending: None,
+            cancel: process::cancel_token(),
+            approve_exec: false,
+            reviewed: BTreeSet::new(),
+            rules: false,
+            duplicates: false,
+            issue_rule: false,
+            responsibility: false,
+            title: String::new(),
+            body: String::new(),
+            signoff: false,
+            confirm_publish: false,
+            token: String::new(),
+            device: None,
+            last_poll: 0,
+            runtime_approval: None,
+            sandbox_consent: false,
+            context_preview: String::new(),
+            gpu_live: false,
+            gpu_status: String::new(),
+            gpu_rx: None,
+            gpu_poll: std::time::Instant::now(),
+            mcp_path: String::new(),
+            mcp_config: None,
+            mcp_config_path: None,
+            mcp_name: String::new(),
+            mcp_consent: false,
+            tools: vec![],
+            tool_index: 0,
+            tool_args: "{}".into(),
+            tool_consent: false,
+            tool_pinned: false,
+            tool_readonly: true,
+        }
     }
     fn job<F>(&mut self, f: F)
     where
@@ -153,72 +201,196 @@ impl App {
             }
         }
     }
-    fn home_page(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Fix one Rust bug, with evidence");
-        ui.label("Investigate a public repository, review a small change, test it in isolation, and decide whether to open a draft pull request.");
-        ui.separator();
-        ui.heading("First-run setup");
-        ui.label("1. In Model & settings, choose your installed Rust inference runtime and complete local model folder. Review its license and enable CPU mode if needed.");
-        ui.label("2. Build the test sandbox once with scripts/build-sandbox.sh --approve-image-download. Repository tests never run on your host.");
-        ui.label("3. Open a repository or try the supplied addition-bug demo. MCP is optional; import your Desktop JSON file in the MCP tab.");
-        if ui.button("Configure local model").clicked() {
-            self.page = Page::Settings;
-        }
-        if ui.button("Investigate a repository").clicked() {
-            self.page = Page::Task;
-        }
-        if ui.button("Try the known-bug demo").clicked() {
-            self.job(|e, _| {
-                let mut r = e.fixture()?;
-                let p: Proposal =
-                    serde_json::from_str(include_str!("../../../fixtures/fix-add.json"))?;
-                e.replace_proposal(&mut r, p)?;
-                Ok(JobResult::Run(r))
+    fn build_sandbox_button(&mut self, ui: &mut egui::Ui) {
+        ui.checkbox(
+            &mut self.sandbox_consent,
+            "I approve downloading the official Rust base image and building the local test sandbox",
+        );
+        if ui
+            .add_enabled(
+                self.sandbox_consent,
+                egui::Button::new("Prepare test sandbox"),
+            )
+            .clicked()
+        {
+            self.sandbox_consent = false;
+            self.job(|_, cancel| {
+                let script = sandbox_script().context(
+                    "Sandbox setup script is missing. Reinstall Rust Repair or build from the source checkout.",
+                )?;
+                let mut command = std::process::Command::new("bash");
+                command
+                    .arg(&script)
+                    .arg("--approve-image-download");
+                let output = process::run(
+                    command,
+                    vec!["bash".into(), script.display().to_string()],
+                    std::time::Duration::from_secs(15 * 60),
+                    &cancel,
+                )?;
+                process::success(output)?;
+                Ok(JobResult::Message(
+                    "SUCCESS: rootless test sandbox is ready. Repository tests stay offline inside it.".into(),
+                ))
             });
         }
-        ui.separator();
-        ui.heading("Status");
+    }
+    fn home_page(&mut self, ui: &mut egui::Ui) {
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(18.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.heading("Fix one Rust bug, with evidence");
+                        ui.label("Inspect a public repository, review a focused change, and verify it in an isolated sandbox.");
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(egui::RichText::new("LOCAL FIRST").strong().color(egui::Color32::from_rgb(36, 104, 82)));
+                    });
+                });
+            });
+
+        ui.add_space(12.0);
+        ui.heading("Get started");
+        ui.label("The demo uses a supplied fix and never publishes. A real repair needs a local model and the sandbox image.");
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_sized([220.0, 38.0], egui::Button::new("Try the known-bug demo"))
+                .clicked()
+            {
+                self.job(|e, _| {
+                    let mut r = e.fixture()?;
+                    let p: Proposal =
+                        serde_json::from_str(include_str!("../../../fixtures/fix-add.json"))?;
+                    e.replace_proposal(&mut r, p)?;
+                    Ok(JobResult::Run(r))
+                });
+            }
+            if ui
+                .add_sized([220.0, 38.0], egui::Button::new("Investigate a repository"))
+                .clicked()
+            {
+                self.page = Page::Task;
+            }
+            if ui
+                .add_sized([190.0, 38.0], egui::Button::new("Configure local model"))
+                .clicked()
+            {
+                self.page = Page::Settings;
+            }
+        });
+
+        ui.add_space(14.0);
+        ui.columns(3, |columns| {
+            for (column, (number, title, detail)) in columns.iter_mut().zip([
+                (
+                    "01",
+                    "Connect a model",
+                    "Choose a local runtime or an existing loopback endpoint.",
+                ),
+                (
+                    "02",
+                    "Prepare the sandbox",
+                    "One-time setup. Repository tests never run on your host.",
+                ),
+                (
+                    "03",
+                    "Review before publishing",
+                    "Every proposed edit and publication needs your approval.",
+                ),
+            ]) {
+                egui::Frame::group(column.style())
+                    .inner_margin(egui::Margin::same(12.0))
+                    .show(column, |ui| {
+                        ui.label(
+                            egui::RichText::new(number)
+                                .strong()
+                                .color(egui::Color32::from_rgb(76, 103, 164)),
+                        );
+                        ui.strong(title);
+                        ui.label(detail);
+                    });
+            }
+        });
+
+        ui.add_space(14.0);
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(14.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("Test sandbox");
+                    ui.label("Rootless Podman · offline repository tests");
+                });
+                self.build_sandbox_button(ui);
+                ui.small("Setup downloads the official Rust base image only after you approve it. Later test runs do not pull images.");
+            });
+
+        ui.add_space(14.0);
         let running = self
             .engine
             .runtime
             .lock()
             .map(|mut r| r.running())
             .unwrap_or(false);
-        ui.label(if running {
-            "Managed model process: running"
-        } else {
-            "Managed model process: stopped (an external local provider may still be available)"
-        });
-        ui.label(format!("Inference endpoint: {}", self.settings.endpoint));
-        if let Ok(runs) = self.engine.store.list() {
-            ui.separator();
-            ui.heading("Recent runs");
-            for r in runs.into_iter().take(5) {
-                if ui
-                    .button(format!(
-                        "{}/{} — {:?} — evidence {}",
-                        r.owner, r.repo, r.state, r.evidence.level
-                    ))
-                    .clicked()
-                {
-                    self.run = Some(r);
-                    self.reviewed.clear();
-                    self.confirm_publish = false;
-                    self.page = Page::Review;
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(14.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("Local model");
+                    ui.label(if running { "Managed runtime running" } else { "Managed runtime stopped" });
+                });
+                ui.label(format!("Endpoint: {}", self.settings.endpoint));
+                if self.settings.runtime_path.is_empty() || self.settings.model_path.is_empty() {
+                    ui.small("No managed runtime is configured. You can also use an existing local endpoint.");
                 }
+                if self.gpu_live && !self.gpu_status.is_empty() {
+                    ui.label(&self.gpu_status);
+                }
+            });
+
+        ui.add_space(14.0);
+        ui.heading("Recent runs");
+        match self.engine.store.list() {
+            Ok(runs) if runs.is_empty() => {
+                ui.label("Your saved runs will appear here.");
+            }
+            Ok(runs) => {
+                for r in runs.into_iter().take(5) {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{}/{}", r.owner, r.repo));
+                        ui.label(format!("{:?}", r.state));
+                        ui.label(format!("Evidence {}", r.evidence.level));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("Open review").clicked() {
+                                self.run = Some(r.clone());
+                                self.reviewed.clear();
+                                self.confirm_publish = false;
+                                self.page = Page::Review;
+                            }
+                        });
+                    });
+                    ui.separator();
+                }
+            }
+            Err(error) => {
+                ui.colored_label(
+                    egui::Color32::RED,
+                    format!("Could not read local history: {error}"),
+                );
             }
         }
     }
     fn task_page(&mut self, ui: &mut egui::Ui) {
         ui.heading("Investigate a Rust repository");
-        ui.label("Public GitHub repositories only. A bug sweep produces a findings report.");
-        ui.label("Repository URL");
-        ui.text_edit_singleline(&mut self.url);
-        ui.checkbox(&mut self.sweep, "Bug sweep (report only)");
+        ui.label("Use a public GitHub repository. The app pins its current commit before it reads source.");
+        ui.label("Repository URL (https://github.com/owner/repository)");
+        ui.add(egui::TextEdit::singleline(&mut self.url).desired_width(f32::INFINITY));
+        ui.checkbox(&mut self.sweep, "Bug sweep (findings only; no patches)");
         if !self.sweep {
             ui.horizontal(|ui| {
                 ui.label("Open issue number (optional)");
-                ui.text_edit_singleline(&mut self.issue);
+                ui.add(egui::TextEdit::singleline(&mut self.issue).desired_width(120.0));
             });
         }
         ui.label("Problem or scan focus");
@@ -227,14 +399,50 @@ impl App {
                 .desired_rows(5)
                 .desired_width(f32::INFINITY),
         );
-        if ui.button("Open and pin repository").clicked() {
+        let repository_is_valid = github::parse_repo(&self.url).is_ok();
+        let issue_is_valid = self.sweep
+            || self.issue.trim().is_empty()
+            || self
+                .issue
+                .trim()
+                .parse::<u64>()
+                .is_ok_and(|number| number > 0);
+        let task_is_valid = !self.task.trim().is_empty();
+        if !self.url.trim().is_empty() && !repository_is_valid {
+            ui.colored_label(
+                egui::Color32::RED,
+                "Enter a URL in the form https://github.com/owner/repository.",
+            );
+        }
+        if !self.sweep && !issue_is_valid {
+            ui.colored_label(
+                egui::Color32::RED,
+                "Issue number must be a positive whole number.",
+            );
+        }
+        if !task_is_valid {
+            ui.small("Describe the bug, or give the sweep a specific focus.");
+        }
+        if ui
+            .add_enabled(
+                repository_is_valid && issue_is_valid && task_is_valid,
+                egui::Button::new("Pin repository and inspect"),
+            )
+            .clicked()
+        {
             let url = self.url.clone();
             let task = self.task.clone();
             let mode = if self.sweep { Mode::Sweep } else { Mode::Issue };
             match if self.issue.trim().is_empty() || self.sweep {
                 Ok(None)
             } else {
-                self.issue.trim().parse::<u64>().map(Some)
+                self.issue
+                    .trim()
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|number| *number > 0)
+                    .map(Some)
+                    .ok_or(())
             } {
                 Ok(issue) => self
                     .job(move |e, c| Ok(JobResult::Run(e.create(&url, &task, mode, issue, &c)?))),
@@ -757,27 +965,6 @@ impl App {
             &mut self.settings.cpu,
             "Use CPU instead of GPU (generation will be slower)",
         );
-        ui.monospace(format!("Runtime command: {:?} serve --host 127.0.0.1 --port <endpoint port> -m {:?} --max-seq-len {}{}",self.settings.runtime_path,self.settings.model_path,self.settings.context_tokens+self.settings.max_output_tokens+512,if self.settings.cpu {" --cpu"}else{""}));
-        ui.checkbox(
-            &mut self.runtime_consent,
-            "I approve launching this local executable with the selected local model",
-        );
-        if ui
-            .add_enabled(self.runtime_consent, egui::Button::new("Load local model"))
-            .clicked()
-        {
-            let settings = self.settings.clone();
-            self.job(move |e, _| {
-                e.store.save_settings(&settings)?;
-                e.runtime
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("Runtime state unavailable"))?
-                    .load(&settings, &e.store.root.join("model-runtime"), true)?;
-                Ok(JobResult::Message(
-                    "Local model process started. Check connection when loading finishes.".into(),
-                ))
-            });
-        }
         if ui.button("Unload managed model").clicked() {
             if let Ok(mut r) = self.engine.runtime.lock() {
                 r.unload();
@@ -851,6 +1038,43 @@ impl App {
             egui::Slider::new(&mut self.settings.max_output_tokens, 512..=8192)
                 .text("Maximum output tokens"),
         );
+        let approved_command = runtime_approval_key(&self.settings);
+        let mut approved = self.runtime_approval.as_deref() == Some(&approved_command);
+        if ui
+            .checkbox(
+                &mut approved,
+                "I approve this exact local runtime command and selected model",
+            )
+            .changed()
+        {
+            self.runtime_approval = approved.then(|| approved_command.clone());
+        }
+        ui.collapsing("Review launch command", |ui| {
+            ui.monospace(format!(
+                "{:?} serve --host 127.0.0.1 --port <port from endpoint> -m {:?} --max-seq-len {}{}",
+                self.settings.runtime_path,
+                self.settings.model_path,
+                self.settings.context_tokens + self.settings.max_output_tokens + 512,
+                if self.settings.cpu { " --cpu" } else { "" }
+            ));
+            ui.small(format!("The endpoint currently configured is {}", self.settings.endpoint));
+        });
+        if ui
+            .add_enabled(approved, egui::Button::new("Load local model"))
+            .clicked()
+        {
+            let settings = self.settings.clone();
+            self.job(move |e, _| {
+                e.store.save_settings(&settings)?;
+                e.runtime
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("Runtime state unavailable"))?
+                    .load(&settings, &e.store.root.join("model-runtime"), true)?;
+                Ok(JobResult::Message(
+                    "Local model process started. Check connection when loading finishes.".into(),
+                ))
+            });
+        }
         if ui.button("Check NVIDIA GPU").clicked() {
             self.job(|_, c| {
                 let mut cmd = std::process::Command::new("nvidia-smi");
@@ -944,15 +1168,27 @@ impl App {
             }
         });
         if ui.button("Import (does not launch anything)").clicked() {
-            match mcp::import(&PathBuf::from(&self.mcp_path)) {
+            let path = PathBuf::from(&self.mcp_path);
+            match mcp::import(&path) {
                 Ok(c) => {
                     self.mcp_name = c.servers.keys().next().cloned().unwrap_or_default();
                     self.mcp_config = Some(c);
+                    self.mcp_config_path = path.canonicalize().ok();
                     self.tools.clear();
                     self.mcp_consent = false;
+                    self.tool_pinned = false;
                     self.message = "Configuration imported; original file not changed".into()
                 }
                 Err(e) => self.message = e.to_string(),
+            }
+        }
+        if let Some(imported_path) = &self.mcp_config_path {
+            if PathBuf::from(&self.mcp_path).canonicalize().ok().as_ref() != Some(imported_path) {
+                ui.colored_label(
+                    egui::Color32::from_rgb(173, 92, 36),
+                    "The file path changed after import. Reimport this file before reviewing or launching a server.",
+                );
+                return;
             }
         }
         let Some(config) = self.mcp_config.clone() else {
@@ -1221,6 +1457,29 @@ impl eframe::App for App {
         }
     }
 }
+fn runtime_approval_key(settings: &Settings) -> String {
+    let command = serde_json::to_vec(&(
+        &settings.runtime_path,
+        &settings.model_path,
+        &settings.endpoint,
+        settings.cpu,
+        settings.context_tokens,
+        settings.max_output_tokens,
+    ))
+    .unwrap_or_default();
+    repair_core::validation::digest(&command)
+}
+
+fn sandbox_script() -> Option<PathBuf> {
+    let installed = PathBuf::from("/usr/share/rust-repair/scripts/build-sandbox.sh");
+    if installed.is_file() {
+        return Some(installed);
+    }
+    let development =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/build-sandbox.sh");
+    development.is_file().then_some(development)
+}
+
 fn main() -> eframe::Result<()> {
     let store = Store::open(store::default_root()).unwrap_or_else(|e| {
         eprintln!("Cannot open local store: {e}");
@@ -1230,12 +1489,78 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Rust Repair",
         eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([1100.0, 800.0]),
+            viewport: egui::ViewportBuilder::default()
+                .with_inner_size([1100.0, 800.0])
+                .with_min_inner_size([760.0, 560.0]),
             ..Default::default()
         },
         Box::new(move |cc| {
-            cc.egui_ctx.set_visuals(egui::Visuals::light());
+            let mut style = (*cc.egui_ctx.style()).clone();
+            style.spacing.item_spacing = egui::vec2(10.0, 8.0);
+            style.spacing.button_padding = egui::vec2(12.0, 7.0);
+            style.spacing.interact_size.y = 30.0;
+            let mut visuals = egui::Visuals::light();
+            visuals.panel_fill = egui::Color32::from_rgb(250, 251, 253);
+            visuals.window_fill = egui::Color32::from_rgb(250, 251, 253);
+            visuals.faint_bg_color = egui::Color32::from_rgb(243, 245, 249);
+            visuals.widgets.noninteractive.bg_fill = egui::Color32::from_rgb(250, 251, 253);
+            visuals.widgets.noninteractive.bg_stroke.color = egui::Color32::from_rgb(222, 227, 236);
+            visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(239, 243, 250);
+            visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(239, 243, 250);
+            visuals.widgets.inactive.rounding = egui::Rounding::same(6.0);
+            visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(222, 232, 249);
+            visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(222, 232, 249);
+            visuals.widgets.active.bg_fill = egui::Color32::from_rgb(57, 82, 137);
+            visuals.widgets.active.weak_bg_fill = egui::Color32::from_rgb(57, 82, 137);
+            visuals.widgets.active.fg_stroke.color = egui::Color32::WHITE;
+            visuals.selection.bg_fill = egui::Color32::from_rgb(57, 82, 137);
+            visuals.selection.stroke.color = egui::Color32::WHITE;
+            visuals.hyperlink_color = egui::Color32::from_rgb(47, 86, 151);
+            visuals.window_rounding = egui::Rounding::same(10.0);
+            style.visuals = visuals;
+            cc.egui_ctx.set_style(style);
             Ok(Box::new(App::new(engine)))
         }),
     )
+}
+
+#[cfg(test)]
+mod ui_tests {
+    use super::{runtime_approval_key, sandbox_script};
+    use repair_core::types::Settings;
+
+    #[test]
+    fn changing_a_managed_launch_argument_requires_fresh_approval() {
+        let original = Settings::default();
+        let approved = runtime_approval_key(&original);
+
+        let mut changed = original.clone();
+        changed.runtime_path = "/opt/mistralrs".into();
+        assert_ne!(runtime_approval_key(&changed), approved);
+
+        let mut changed = original.clone();
+        changed.model_path = "/models/coder".into();
+        assert_ne!(runtime_approval_key(&changed), approved);
+
+        let mut changed = original.clone();
+        changed.endpoint = "http://127.0.0.1:1235/v1/chat/completions".into();
+        assert_ne!(runtime_approval_key(&changed), approved);
+
+        let mut changed = original.clone();
+        changed.cpu = true;
+        assert_ne!(runtime_approval_key(&changed), approved);
+
+        let mut changed = original.clone();
+        changed.context_tokens += 512;
+        assert_ne!(runtime_approval_key(&changed), approved);
+
+        let mut changed = original;
+        changed.max_output_tokens += 512;
+        assert_ne!(runtime_approval_key(&changed), approved);
+    }
+
+    #[test]
+    fn sandbox_setup_script_is_available_for_a_source_checkout() {
+        assert!(sandbox_script().is_some());
+    }
 }
