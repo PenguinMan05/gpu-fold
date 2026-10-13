@@ -16,13 +16,15 @@
 - Package dependencies now use the binary's measured minimum GLIBC version.
 - Live Git archive import exposed a global PAX header and trailing directory separators. Bounded metadata and normal directory entries are accepted; links, unsafe paths and special files remain rejected. The regression test passes.
 
-## Final Linux gates
+## Current Linux build
 
-Final source commit `6194db2925807cd24efa8cb81680ef133c867852` passed [CI run 38468404370](https://github.com/PenguinMan05/gpu-fold/actions/runs/38468404370): 25 regression tests, workspace check, release build, sandbox probe, level-3 fixture, live public GitHub repository pinning/preflight, native launch/screenshot, Debian package creation and actual package installation. Cancellation and container cleanup completed in 3,209 ms.
+Final application commit `0745a5d2ce6747bbca29b26aeeab0e07b750f167` passed [CI run 38471619205](https://github.com/PenguinMan05/gpu-fold/actions/runs/38471619205): 28 workspace tests, workspace check, release build, sandbox probe, level-3 fixture, live public GitHub repository pinning/preflight, native launch/screenshot, Debian package creation and actual package installation. The final UI screenshot was inspected for text contrast. Cancellation and container cleanup completed in 3,209 ms.
+
+The workspace's 28 tests include 25 core regressions plus three desktop checks for exact runtime launch approval, installed/source sandbox script discovery, and stale MCP configuration invalidation. The UI review also fixed empty task submission, zero/invalid issue numbers, setup instructions from the installed launcher, and first-run card contrast.
 
 The Linux x86-64 installer requires GLIBC 2.39 or newer (Ubuntu 24.04 / Mint 22 generation). The inference runtime and complete local model remain separate prerequisites. The supplied synthetic demo does not require a model, but its test execution still needs the explicitly prepared rootless sandbox image.
 
-Artifact `linux-build` (ID 11850781377) ZIP SHA-256: `1d244531f0305e28db3d3fc8ae1f517c506a65427257f3c2fa6746f23184c568`. Downloaded artifact bytes matched this digest; the screenshot, package metadata, public pin and fixture/sandbox records were inspected.
+Artifact `linux-build` (ID 11851519723) ZIP SHA-256: `0e2632aa91c5f52751d6c235b06a7cbaa206741ef067c47f5a7bf45a2618b37b`. The downloaded archive passed its checksum and ZIP integrity check; the screenshot, package metadata, public pin and fixture/sandbox records were inspected.
 
 ## Still requires evidence
 
