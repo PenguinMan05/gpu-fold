@@ -3,7 +3,7 @@
 ## Passed
 
 - Local `cargo check --offline --locked --workspace` with Rust 1.99.0.
-- 24 regression tests: unsafe paths/archives, exact citations, patch scope, existing tests, worktree tampering, evidence consistency, secret redaction, publish blockers, local model streaming, cancellation, inherited pipes, MCP changed definitions, wire limits and argument roots.
+- 25 regression tests: unsafe paths/archives, exact citations, patch scope, existing tests, worktree tampering, evidence consistency, secret redaction, publish blockers, local model streaming, cancellation, inherited pipes, MCP changed definitions, wire limits and argument roots.
 - GitHub release build of the desktop and CLI.
 - CI run 38464736953: rootless Podman known-bug fixture reproduced twice before the production patch, then reached level 3 with two verification passes.
 - The same CI run's initial isolation probe: host secret access, inherited environment, network/device/socket exposure and writable-copy checks passed. Its original cancellation cleanup was slow; a revised stop-container-first implementation passed the stricter nine-second probe in CI run 38465895689.

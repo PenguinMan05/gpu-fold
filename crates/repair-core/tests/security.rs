@@ -224,3 +224,38 @@ fn edited_no_fix_stops_without_patch_approval() {
     assert_eq!(run.evidence.level, 0);
     assert!(engine.approve_plan(&mut run).is_err());
 }
+
+#[test]
+fn git_archive_global_pax_metadata_is_not_a_filesystem_entry() {
+    let f = Fixture::new();
+    let mut builder = tar::Builder::new(Vec::new());
+    let bytes = b"52 comment=0123456789012345678901234567890123456789\n";
+    let mut metadata = tar::Header::new_gnu();
+    metadata.set_size(bytes.len() as u64);
+    metadata.set_entry_type(tar::EntryType::XGlobalHeader);
+    metadata.set_mode(0o644);
+    metadata.set_cksum();
+    builder
+        .append_data(&mut metadata, "pax_global_header", &bytes[..])
+        .unwrap();
+    let mut directory = tar::Header::new_gnu();
+    directory.set_size(0);
+    directory.set_entry_type(tar::EntryType::Directory);
+    directory.set_mode(0o755);
+    directory.set_cksum();
+    builder
+        .append_data(&mut directory, "normal-directory/", std::io::empty())
+        .unwrap();
+    let mut file = tar::Header::new_gnu();
+    file.set_size(4);
+    file.set_mode(0o644);
+    file.set_cksum();
+    builder
+        .append_data(&mut file, "file.txt", &b"safe"[..])
+        .unwrap();
+    let data = builder.into_inner().unwrap();
+    let root = f.0.join("pax");
+    repository::unpack(&data[..], &root, false, 1000, 10).unwrap();
+    assert_eq!(fs::read(root.join("file.txt")).unwrap(), b"safe");
+    assert!(!root.join("pax_global_header").exists());
+}

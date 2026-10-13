@@ -20,7 +20,7 @@ The supplied design remains the specification. A compiled application and a synt
 - Only level-3 changes may be published in this build. The advanced lower-evidence override is not implemented.
 - An upstream change stops publication and requires a fresh reviewed/tested run; automatic rebase is not implemented.
 - Git/custom registries are rejected; source-provided Cargo configuration and toolchain selectors are shown in preflight and excluded from execution copies.
-- Existing tests remain byte-for-byte unchanged. Formatting-only replacements and malformed Rust are rejected rather than automatically running repository-provided tooling.
+- Existing tests remain byte-for-byte unchanged. Malformed Rust is rejected rather than automatically running repository-provided tooling. Dedicated formatting-only hunk detection remains outstanding.
 - No models or inference runtime are silently downloaded. Select complete local assets and an installed Rust inference runtime, or connect an existing compatible local provider.
 
 These limits are visible instead of being represented as completed design milestones.

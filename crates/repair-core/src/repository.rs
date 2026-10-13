@@ -34,6 +34,17 @@ pub fn unpack<R: Read>(
     fs::create_dir_all(dest)?;
     for entry in tar.entries()? {
         let mut entry = entry?;
+        let kind = entry.header().entry_type();
+        count += 1;
+        ensure!(count <= file_limit, "Too many archive entries");
+        // Git archive writes a global PAX comment containing its commit ID.
+        // Metadata never becomes a filesystem entry and stays tightly bounded.
+        if kind.is_pax_global_extensions() || kind.is_pax_local_extensions() {
+            ensure!(entry.size() <= 65536, "Archive metadata exceeds cap");
+            total = total.checked_add(entry.size()).context("Size overflow")?;
+            ensure!(total <= byte_limit, "Archive metadata budget exceeded");
+            continue;
+        }
         let p = entry.path()?.to_path_buf();
         let p = if strip_prefix {
             p.components().skip(1).collect::<std::path::PathBuf>()
@@ -44,8 +55,12 @@ pub fn unpack<R: Read>(
             continue;
         }
         let name = p.to_str().context("Non-UTF8 paths unsupported")?.to_owned();
+        let name = if kind.is_dir() {
+            name.trim_end_matches('/').to_owned()
+        } else {
+            name
+        };
         validation::safe_path(&name)?;
-        let kind = entry.header().entry_type();
         ensure!(
             kind.is_file() || kind.is_dir(),
             "Archive symlinks, hardlinks and special files forbidden"
@@ -59,8 +74,7 @@ pub fn unpack<R: Read>(
             fs::create_dir_all(&path)?;
             continue;
         }
-        count += 1;
-        ensure!(count <= file_limit, "Too many files");
+
         let size = entry.size();
         total = total.checked_add(size).context("Size overflow")?;
         ensure!(total <= byte_limit, "Archive exceeds size cap");
