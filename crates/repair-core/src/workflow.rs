@@ -108,6 +108,8 @@ impl Engine {
                 "Trusted synthetic benchmark; not a real-world success-rate evaluation".into(),
             ],
             pr_url: None,
+            mcp_approvals: vec![],
+            tool_results: vec![],
         };
         self.store.save(&r)?;
         Ok(r)
@@ -122,12 +124,28 @@ impl Engine {
         ensure!(
             matches!(
                 r.state,
-                State::Pinned | State::AwaitPlan | State::NoFix | State::Cancelled
+                State::Pinned
+                    | State::AwaitPlan
+                    | State::AwaitTools
+                    | State::NoFix
+                    | State::Cancelled
+                    | State::Review
             ),
             "Analyze only an unpatched run"
         );
         ensure!(r.attempts < 3, "Proposal budget exhausted");
         ensure!(r.prompts.len() < 3, "Prompt budget exhausted");
+        ensure!(
+            r.state != State::Review || r.evidence.level < 3,
+            "A verified patch must be reviewed, not overwritten"
+        );
+        if r.proposal.is_some() {
+            let work = r.root.join("work");
+            if work.exists() {
+                std::fs::remove_dir_all(&work)?;
+            }
+            repository::copy_tree(&r.root.join("pristine"), &work)?;
+        }
         self.transition(r, State::Analyzing)?;
         let activity = self.activity.clone();
         if let Ok(mut a) = activity.lock() {
@@ -139,19 +157,27 @@ impl Engine {
             }
         }) {
             Ok(p) => {
-                r.evidence.level = if p.no_fix { 0 } else { 1 };
+                r.evidence = Evidence::default();
+                r.evidence.level = if p.no_fix || !p.tool_requests.is_empty() {
+                    0
+                } else {
+                    1
+                };
                 r.evidence.reason = if p.no_fix {
                     "Model reported no supported fix"
                 } else {
                     "App verified source citations; model claim untested"
                 }
                 .into();
+                let tools_pending = !p.tool_requests.is_empty();
                 let no_fix = p.no_fix;
                 r.proposal = Some(p);
                 self.transition(
                     r,
                     if no_fix {
                         State::NoFix
+                    } else if tools_pending {
+                        State::AwaitTools
                     } else {
                         State::AwaitPlan
                     },
@@ -162,6 +188,109 @@ impl Engine {
                 self.transition(r, State::Cancelled)?;
                 Err(e)
             }
+        }
+    }
+    pub fn approve_mcp(
+        &self,
+        r: &mut Run,
+        path: &Path,
+        server: &str,
+        pin: &crate::mcp::ToolPin,
+        read_only: bool,
+    ) -> Result<()> {
+        let _lock = self.lock(r)?;
+        ensure!(
+            !matches!(
+                r.state,
+                State::Publishing | State::Published | State::Patched | State::Verifying
+            ),
+            "Configure tools on an unpatched run"
+        );
+        let config = crate::mcp::import(path)?;
+        let srv = config
+            .servers
+            .get(server)
+            .context("MCP server disappeared")?;
+        ensure!(
+            srv.url.is_none(),
+            "Remote MCP requires a separate egress adapter"
+        );
+        let approval = McpApproval {
+            config_path: path.canonicalize()?,
+            server: server.into(),
+            server_hash: validation::digest(&serde_json::to_vec(srv)?),
+            pin: pin.clone(),
+            read_only,
+            enabled: true,
+        };
+        r.mcp_approvals
+            .retain(|a| a.server != server || a.pin.name != pin.name);
+        r.mcp_approvals.push(approval);
+        self.store.save(r)
+    }
+    pub fn requested_tool(&self, r: &mut Run, index: usize, approve_call: bool) -> Result<()> {
+        let _lock = self.lock(r)?;
+        ensure!(
+            r.state == State::AwaitTools,
+            "No model tool request awaiting review"
+        );
+        ensure!(r.tool_results.len() < 10, "Run tool-call budget exhausted");
+        let request = r
+            .proposal
+            .as_ref()
+            .context("No model proposal")?
+            .tool_requests
+            .get(index)
+            .context("Tool request missing")?
+            .clone();
+        let approval = r
+            .mcp_approvals
+            .iter()
+            .find(|a| a.enabled && a.server == request.server && a.pin.name == request.name)
+            .context("Tool is not approved")?
+            .clone();
+        ensure!(
+            approval.read_only || approve_call,
+            "Approve the exact tool payload and its possible effects"
+        );
+        let config = crate::mcp::import(&approval.config_path)?;
+        let server = config
+            .servers
+            .get(&approval.server)
+            .context("Server disappeared")?;
+        ensure!(
+            validation::digest(&serde_json::to_vec(server)?) == approval.server_hash,
+            "Server configuration changed; approve it again"
+        );
+        crate::mcp::workspace_args(
+            &serde_json::Value::Object(request.arguments.clone()),
+            &r.root.join("work"),
+        )?;
+        let output = crate::mcp::call(
+            server,
+            &r.root.join("work"),
+            &approval.pin,
+            request.arguments.clone(),
+            true,
+        )?;
+        r.tool_results.push(format!(
+            "BEGIN UNTRUSTED MCP RESULT {} / {}\nArguments: {}\n{}\nEND UNTRUSTED MCP RESULT",
+            request.server,
+            request.name,
+            process::scrub(&serde_json::to_string(&request.arguments)?),
+            output
+        ));
+        if let Some(p) = &mut r.proposal {
+            p.tool_requests.remove(index);
+        }
+        if r.proposal
+            .as_ref()
+            .is_some_and(|p| p.tool_requests.is_empty())
+        {
+            r.proposal = None;
+            self.transition(r, State::Pinned)
+        } else {
+            self.store.save(r)
         }
     }
     pub fn reject(&self, r: &mut Run) -> Result<()> {

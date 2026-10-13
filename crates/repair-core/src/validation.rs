@@ -62,6 +62,7 @@ fn sensitive(p: &str) -> bool {
 }
 pub fn validate_proposal(root: &Path, p: &Proposal) -> Result<()> {
     ensure!(p.explanation.len() <= 20000, "Explanation too long");
+    ensure!(p.tool_requests.len() <= 10, "Tool-call budget exceeded");
     if p.no_fix {
         ensure!(
             p.edits.is_empty() && p.reproduction.is_none(),
@@ -69,7 +70,8 @@ pub fn validate_proposal(root: &Path, p: &Proposal) -> Result<()> {
         )
     }
     ensure!(
-        (p.no_fix || !p.citations.is_empty()) && p.citations.len() <= 20,
+        (p.no_fix || !p.tool_requests.is_empty() || !p.citations.is_empty())
+            && p.citations.len() <= 20,
         "Need 1-20 source citations for a bug claim"
     );
     for c in &p.citations {
@@ -91,6 +93,10 @@ pub fn validate_proposal(root: &Path, p: &Proposal) -> Result<()> {
         );
     }
     if p.no_fix {
+        ensure!(
+            p.tool_requests.is_empty(),
+            "No-fix output cannot request tools"
+        );
         return Ok(());
     }
     ensure!(
@@ -158,6 +164,10 @@ pub fn validate_proposal(root: &Path, p: &Proposal) -> Result<()> {
             "Possible secret in patch"
         );
     }
+    ensure!(
+        p.tool_requests.is_empty() || (p.edits.is_empty() && p.reproduction.is_none()),
+        "Tool requests must precede a final patch"
+    );
     if let Some(r) = &p.reproduction {
         safe_path(&r.path)?;
         ensure!(

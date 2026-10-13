@@ -203,6 +203,8 @@ pub fn create(
         context_paths: vec![],
         notes: vec![],
         pr_url: None,
+        mcp_approvals: vec![],
+        tool_results: vec![],
     })
 }
 pub fn scan(root: &Path) -> Result<Preflight> {

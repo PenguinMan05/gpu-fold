@@ -64,12 +64,15 @@ pub fn image_id(name: &str, cancel: &process::Cancel) -> Result<String> {
         Duration::from_secs(20),
         cancel,
     )?)?;
-    let id = o.output.trim();
+    normalize_image_id(o.output.trim())
+}
+pub fn normalize_image_id(id: &str) -> Result<String> {
+    let hex = id.strip_prefix("sha256:").unwrap_or(id);
     ensure!(
-        id.starts_with("sha256:") && id.len() == 71,
+        hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()),
         "Invalid local image digest"
     );
-    Ok(id.into())
+    Ok(format!("sha256:{hex}"))
 }
 pub fn fetch_vendor(source: &Path, vendor: &Path, cancel: &process::Cancel) -> Result<()> {
     ensure!(

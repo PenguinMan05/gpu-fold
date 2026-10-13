@@ -192,6 +192,52 @@ fn local_refs_only(value: &Value) -> Result<()> {
     }
     Ok(())
 }
+
+pub fn workspace_args(value: &Value, root: &Path) -> Result<()> {
+    match value {
+        Value::Object(map) => {
+            for (key, value) in map {
+                let key = key.to_ascii_lowercase();
+                if ["path", "file", "directory", "root", "cwd", "filename"]
+                    .iter()
+                    .any(|n| key == *n || key.ends_with(&format!("_{n}")))
+                {
+                    if let Some(path) = value.as_str() {
+                        let path = Path::new(path);
+                        let resolved = if path.is_absolute() {
+                            path.to_path_buf()
+                        } else {
+                            crate::validation::safe_path(
+                                path.to_str().context("Invalid tool path")?,
+                            )?;
+                            root.join(path)
+                        };
+                        let parent = if resolved.exists() {
+                            resolved.clone()
+                        } else {
+                            resolved
+                                .parent()
+                                .context("Tool path has no parent")?
+                                .to_path_buf()
+                        };
+                        ensure!(
+                            parent.canonicalize()?.starts_with(root.canonicalize()?),
+                            "Tool path escapes run workspace"
+                        );
+                    }
+                }
+                workspace_args(value, root)?;
+            }
+        }
+        Value::Array(a) => {
+            for v in a {
+                workspace_args(v, root)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
 pub fn call(
     s: &Server,
     workspace: &Path,

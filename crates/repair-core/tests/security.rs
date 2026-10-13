@@ -26,7 +26,7 @@ impl Drop for Fixture {
     }
 }
 fn proposal() -> Proposal {
-    Proposal{explanation:"Addition uses subtraction".into(),citations:vec![Citation{path:"src/lib.rs".into(),start_line:1,snippet:"pub fn add(a: u32, b: u32) -> u32 { a - b }".into()}],planned_files:vec!["src/lib.rs".into()],edits:vec![Edit{path:"src/lib.rs".into(),old:"a - b".into(),new:"a + b".into()}],reproduction:Some(Reproduction{path:"tests/repair_add.rs".into(),content:"#[test]\nfn repair_add() { assert_eq!(fixture_add::add(5, 2), 7, \"REPAIR_ADD_WRONG_RESULT\"); }\n".into(),test_name:"repair_add".into(),failure_marker:"REPAIR_ADD_WRONG_RESULT".into()}),no_fix:false}
+    Proposal{explanation:"Addition uses subtraction".into(),citations:vec![Citation{path:"src/lib.rs".into(),start_line:1,snippet:"pub fn add(a: u32, b: u32) -> u32 { a - b }".into()}],planned_files:vec!["src/lib.rs".into()],edits:vec![Edit{path:"src/lib.rs".into(),old:"a - b".into(),new:"a + b".into()}],reproduction:Some(Reproduction{path:"tests/repair_add.rs".into(),content:"#[test]\nfn repair_add() { assert_eq!(fixture_add::add(5, 2), 7, \"REPAIR_ADD_WRONG_RESULT\"); }\n".into(),test_name:"repair_add".into(),failure_marker:"REPAIR_ADD_WRONG_RESULT".into()}),no_fix:false,tool_requests:vec![]}
 }
 #[test]
 fn unsafe_paths_rejected() {

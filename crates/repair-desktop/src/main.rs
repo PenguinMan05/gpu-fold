@@ -60,12 +60,12 @@ struct App {
     tool_args: String,
     tool_consent: bool,
     tool_pinned: bool,
-    tool_output: String,
+    tool_readonly: bool,
 }
 impl App {
     fn new(engine: Engine) -> Self {
         let settings = engine.store.settings().unwrap_or_default();
-        Self{engine,page:Page::Home,settings,url:String::new(),task:String::new(),issue:String::new(),sweep:false,run:None,proposal_json:String::new(),edit_proposal:false,message:"Choose a repository to begin. All changes remain local until you approve publishing.".into(),pending:None,cancel:process::cancel_token(),approve_exec:false,reviewed:BTreeSet::new(),rules:false,duplicates:false,issue_rule:false,responsibility:false,title:String::new(),body:String::new(),signoff:false,confirm_publish:false,token:String::new(),device:None,last_poll:0,runtime_consent:false,context_preview:String::new(),mcp_path:String::new(),mcp_config:None,mcp_name:String::new(),mcp_consent:false,tools:vec![],tool_index:0,tool_args:"{}".into(),tool_consent:false,tool_pinned:false,tool_output:String::new()}
+        Self{engine,page:Page::Home,settings,url:String::new(),task:String::new(),issue:String::new(),sweep:false,run:None,proposal_json:String::new(),edit_proposal:false,message:"Choose a repository to begin. All changes remain local until you approve publishing.".into(),pending:None,cancel:process::cancel_token(),approve_exec:false,reviewed:BTreeSet::new(),rules:false,duplicates:false,issue_rule:false,responsibility:false,title:String::new(),body:String::new(),signoff:false,confirm_publish:false,token:String::new(),device:None,last_poll:0,runtime_consent:false,context_preview:String::new(),mcp_path:String::new(),mcp_config:None,mcp_name:String::new(),mcp_consent:false,tools:vec![],tool_index:0,tool_args:"{}".into(),tool_consent:false,tool_pinned:false,tool_readonly:true}
     }
     fn job<F>(&mut self, f: F)
     where
@@ -282,13 +282,19 @@ impl App {
                 self.settings.context_tokens, self.settings.max_output_tokens
             ));
             if ui.button("Preview source scope before inference").clicked() {
-                match repair_core::repository::context(
-                    &r.root.join("pristine"),
-                    &r.task,
-                    self.settings.context_chars,
-                ) {
-                    Ok((context, paths)) => {
-                        self.context_preview = format!("Files: {}\n{}", paths.join(", "), context);
+                match repair_core::model::preview(&r, &self.settings) {
+                    Ok((prompt, paths, tokens, exact)) => {
+                        self.context_preview = format!(
+                            "{} input {}\nFiles: {}\n{}",
+                            tokens,
+                            if exact {
+                                "tokens"
+                            } else {
+                                "conservative byte budget"
+                            },
+                            paths.join(", "),
+                            prompt
+                        );
                     }
                     Err(e) => self.message = e.to_string(),
                 }
@@ -303,7 +309,12 @@ impl App {
                 .add_enabled(
                     matches!(
                         r.state,
-                        State::Pinned | State::AwaitPlan | State::NoFix | State::Cancelled
+                        State::Pinned
+                            | State::AwaitPlan
+                            | State::AwaitTools
+                            | State::NoFix
+                            | State::Cancelled
+                            | State::Review
                     ) && r.attempts < 3,
                     egui::Button::new("Analyze with my local model"),
                 )
@@ -373,7 +384,79 @@ impl App {
                 }
             }
         }
+        if r.state == State::Pinned && !r.tool_results.is_empty() {
+            if ui
+                .button("Continue analysis with reviewed tool results")
+                .clicked()
+            {
+                let settings = self.settings.clone();
+                self.job(move |e, c| {
+                    let mut r = r;
+                    e.analyze(&mut r, &settings, &c)?;
+                    Ok(JobResult::Run(r))
+                });
+                return;
+            }
+        }
+        if r.state == State::Review && r.evidence.level < 3 && r.attempts < 3 {
+            if ui
+                .button("Revise with test feedback (bounded retry)")
+                .clicked()
+            {
+                let settings = self.settings.clone();
+                self.reviewed.clear();
+                self.job(move |e, c| {
+                    let mut r = r;
+                    e.analyze(&mut r, &settings, &c)?;
+                    Ok(JobResult::Run(r))
+                });
+                return;
+            }
+        }
         if let Some(p) = r.proposal.clone() {
+            if r.state == State::AwaitTools {
+                ui.heading("Model-requested tools");
+                ui.label(
+                    "The model cannot execute these. Review the approved tool and exact arguments.",
+                );
+                for (i, request) in p.tool_requests.iter().enumerate() {
+                    ui.label(format!("{} / {}", request.server, request.name));
+                    ui.monospace(
+                        serde_json::to_string_pretty(&request.arguments).unwrap_or_default(),
+                    );
+                    let read_only = r.mcp_approvals.iter().any(|a| {
+                        a.enabled
+                            && a.read_only
+                            && a.server == request.server
+                            && a.pin.name == request.name
+                    });
+                    if !read_only {
+                        ui.checkbox(
+                            &mut self.tool_consent,
+                            "I approve these exact arguments and possible writes or egress",
+                        );
+                    }
+                    if ui
+                        .add_enabled(
+                            read_only || self.tool_consent,
+                            egui::Button::new("Run this approved tool"),
+                        )
+                        .clicked()
+                    {
+                        let r = r.clone();
+                        let consent = self.tool_consent;
+                        self.tool_consent = false;
+                        self.job(move |e, _| {
+                            let mut r = r;
+                            e.requested_tool(&mut r, i, consent)?;
+                            Ok(JobResult::Run(r))
+                        });
+                        return;
+                    }
+                }
+                return;
+            }
+
             ui.heading("Model proposal (untrusted claim)");
             ui.add(egui::Label::new(&p.explanation).selectable(true));
             for cite in &p.citations {
@@ -926,6 +1009,39 @@ impl App {
                     if let Err(e) = result {
                         self.tool_pinned = false;
                         self.message = e.to_string();
+                    }
+                }
+                ui.checkbox(
+                    &mut self.tool_readonly,
+                    "Classify this tool as read-only for this run (server hints are ignored)",
+                );
+                if ui
+                    .add_enabled(
+                        self.tool_pinned && self.run.is_some(),
+                        egui::Button::new("Allow this tool in the current repair run"),
+                    )
+                    .clicked()
+                {
+                    if let Some(r) = self.run.clone() {
+                        let path = PathBuf::from(&self.mcp_path);
+                        let server = self.mcp_name.clone();
+                        let pin = pin.clone();
+                        let read_only = self.tool_readonly;
+                        self.job(move |e, _| {
+                            let mut r = r;
+                            e.approve_mcp(&mut r, &path, &server, &pin, read_only)?;
+                            Ok(JobResult::Run(r))
+                        });
+                    }
+                }
+                if ui.button("Disable all tools in this run").clicked() {
+                    if let Some(r) = &mut self.run {
+                        for a in &mut r.mcp_approvals {
+                            a.enabled = false;
+                        }
+                        if let Err(e) = self.engine.store.save(r) {
+                            self.message = e.to_string();
+                        }
                     }
                 }
                 ui.label("Exact tool payload preview (JSON object)");

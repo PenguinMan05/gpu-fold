@@ -16,6 +16,8 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Resolve dependencies
         run: cargo generate-lockfile
       - name: Preserve resolved lockfile

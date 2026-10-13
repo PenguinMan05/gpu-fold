@@ -18,6 +18,7 @@ pub enum Mode {
 pub enum State {
     Pinned,
     Analyzing,
+    AwaitTools,
     AwaitPlan,
     AwaitPatch,
     Patched,
@@ -55,6 +56,23 @@ pub struct Proposal {
     pub edits: Vec<Edit>,
     pub reproduction: Option<Reproduction>,
     pub no_fix: bool,
+    #[serde(default)]
+    pub tool_requests: Vec<ToolRequest>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolRequest {
+    pub server: String,
+    pub name: String,
+    pub arguments: serde_json::Map<String, serde_json::Value>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct McpApproval {
+    pub config_path: PathBuf,
+    pub server: String,
+    pub server_hash: String,
+    pub pin: crate::mcp::ToolPin,
+    pub read_only: bool,
+    pub enabled: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Observation {
@@ -116,6 +134,10 @@ pub struct Run {
     pub context_paths: Vec<String>,
     pub notes: Vec<String>,
     pub pr_url: Option<String>,
+    #[serde(default)]
+    pub mcp_approvals: Vec<McpApproval>,
+    #[serde(default)]
+    pub tool_results: Vec<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
