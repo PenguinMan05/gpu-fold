@@ -26,3 +26,6 @@ regex.workspace = true
 jsonschema.workspace = true
 
 fs2.workspace = true
+tree-sitter.workspace = true
+tree-sitter-rust.workspace = true
+tokenizers.workspace = true

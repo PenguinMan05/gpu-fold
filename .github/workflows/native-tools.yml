@@ -1,0 +1,31 @@
+name: Refresh verification dependencies
+on:
+  push:
+    paths: [.github/workflows/native-tools.yml]
+permissions:
+  contents: read
+jobs:
+  tools:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y pkgconf libdbus-1-dev
+      - run: cargo fetch
+      - name: Bundle public dependencies and native headers
+        run: |
+          mkdir -p /tmp/native/usr/bin /tmp/native/usr/include /tmp/native/usr/lib/x86_64-linux-gnu/pkgconfig
+          cp /usr/bin/pkgconf /tmp/native/usr/bin/pkg-config
+          cp -a /usr/lib/x86_64-linux-gnu/libpkgconf.so* /usr/lib/x86_64-linux-gnu/libdbus-1.so* /tmp/native/usr/lib/x86_64-linux-gnu/
+          cp -a /usr/include/dbus-1.0 /tmp/native/usr/include/
+          cp -a /usr/lib/x86_64-linux-gnu/dbus-1.0 /tmp/native/usr/lib/x86_64-linux-gnu/
+          cp /usr/lib/x86_64-linux-gnu/pkgconfig/dbus-1.pc /tmp/native/usr/lib/x86_64-linux-gnu/pkgconfig/
+          cp -a "$HOME/.cargo/registry" /tmp/native/registry
+          cp Cargo.lock /tmp/native/
+          tar -czf /tmp/native.tar.gz -C /tmp/native .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-verification-dependencies
+          path: /tmp/native.tar.gz
+          retention-days: 1
