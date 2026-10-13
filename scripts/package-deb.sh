@@ -10,7 +10,7 @@
   mkdir -p "$package_dir/DEBIAN" "$package_dir/usr/bin" "$package_dir/usr/share/applications" "$package_dir/usr/share/doc/rust-repair" "$package_dir/usr/share/rust-repair/scripts"
   install -m 755 dist/rust-repair dist/rust-repair-desktop "$package_dir/usr/bin/"
   install -m 644 README.md LICENSE "$package_dir/usr/share/doc/rust-repair/"
-  glibc_min="$(readelf --version-info dist/rust-repair dist/rust-repair-desktop | rg -o 'GLIBC_[0-9.]+' | sed 's/GLIBC_//' | sort -V | tail -n 1)"
+  glibc_min="$(readelf --version-info dist/rust-repair dist/rust-repair-desktop | sed -nE 's/.*Name: GLIBC_([0-9.]+).*/\1/p' | sort -V | tail -n 1)"
   test -n "$glibc_min"
   install -m 644 scripts/Containerfile scripts/sandbox-runner.rs "$package_dir/usr/share/rust-repair/scripts/"
   install -m 755 scripts/build-sandbox.sh "$package_dir/usr/share/rust-repair/scripts/"

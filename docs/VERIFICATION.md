@@ -1,28 +1,26 @@
-# Verification record - 2026-10-13
+# Verification — 2026-10-13
 
-## Environment blockers
+## Passed
 
-- `rustc` and `cargo` were absent; searches of the available filesystem found no toolchain.
-- Rust toolchain, crates.io and Ubuntu repository requests received HTTP 403 through the supplied network route, including an escalated request. Direct access failed DNS resolution.
-- Rootless Podman/Docker, a desktop display session, and an NVIDIA GPU were unavailable.
+- Local `cargo check --offline --locked --workspace` with Rust 1.99.0.
+- 22 regression tests: unsafe paths/archives, exact citations, patch scope, existing tests, worktree tampering, evidence consistency, secret redaction, publish blockers, local model streaming, cancellation, inherited pipes, MCP changed definitions, wire limits and argument roots.
+- GitHub release build of the desktop and CLI.
+- CI run 38464736953: rootless Podman known-bug fixture reproduced twice before the production patch, then reached level 3 with two verification passes.
+- The same CI run's initial isolation probe: host secret access, inherited environment, network/device/socket exposure and writable-copy checks passed. Its original cancellation cleanup was slow; a revised stop-container-first implementation passed the stricter nine-second probe in CI run 38465895689.
 
-## Checks performed
+## Found and fixed
 
-- Read the supplied 20-page v1.1 PDF and tracked requirements in the implementation status table.
-- Reviewed all Rust modules for trust boundaries, state gates, archive extraction, bounded I/O, literal loopback inference, Git authentication, proposal validation, cancellation, and publication recovery.
-- Checked shell script syntax using `bash -n`.
-- Parsed Cargo/TOML/JSON files; checked workspace membership and embedded fixture source paths.
-- Checked fixture JSON replacement and citation against the supplied fixture source.
-- Checked the package manifest and archive for expected source, scripts, tests, documentation and absence of generated credentials/history.
+- Missing rmcp feature dependencies and obsolete TOML serialization compatibility.
+- Podman image IDs may be returned as bare 64-character hex; normalized and validated.
+- Native X11 launch requires libxkbcommon-x11-0; added to CI and Debian dependencies.
+- Package dependencies now use the binary's measured minimum GLIBC version.
 
-See `source-audit.json` for the exact successful static/artifact checks. These checks do **not** prove compilation, runtime behavior, isolation or AI accuracy.
+## Still requires evidence
 
-## Required next gates
+- Final Debian package installation checks.
+- The native desktop launch and screenshot passed in CI run 38465895689; its package step found a missing ripgrep command, now removed from the packaging script.
+- Actual local coding-model inference and reference RTX 4070 performance/VRAM measurements.
+- Live app-driven device-flow/fork/push/draft-PR tests.
+- Full real-bug/control/hostile benchmark and accessibility/comprehension study.
 
-1. `bash scripts/build-linux.sh`: compilation, Rust tests, all-workspace check and native build. Resolve any compiler/dependency issues before running real repositories.
-2. Rootless sandbox build, then `bash scripts/verify-fixture.sh`: four real runs and level-3 evidence.
-3. Hostile source fixtures: attempts to read host secrets, connect to network, enumerate environment and exceed every budget. Measure cancel/timeout cleanup and confirm no container remains.
-4. MCP local mock-server tests: changed definitions, invalid schemas, hangs, process cleanup and oversized messages. Wire-level limits are still outstanding.
-5. Local model on RTX 4070: exact model/version/hash, VRAM, throughput, JSON validation, cancellation and held-out fix quality.
-6. GitHub authorization, fork reuse/poll, push and draft PR in a user-controlled test repository; verify no upstream-write or force-push. No live publication was attempted here.
-7. Complete the real benchmark/control/hostile set and native accessibility review from v1.1 before calling this a production release.
+Successful CI artifacts include the fixture record, sandbox report, desktop startup log, screenshot, binaries and package. Failed artifacts are diagnostics and are not releases.

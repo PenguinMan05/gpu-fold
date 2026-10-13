@@ -19,7 +19,7 @@ jobs:
         with:
           cache-on-failure: true
       - name: Resolve dependencies
-        run: cargo generate-lockfile
+        run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Preserve resolved lockfile
         uses: actions/upload-artifact@v4
         with:
@@ -52,6 +52,13 @@ jobs:
           xvfb-run --auto-servernum bash scripts/verify-desktop.sh
       - name: Package Linux app
         run: bash scripts/package-deb.sh
+      - name: Install and verify package
+        run: |
+          sudo dpkg -i dist/rust-repair_0.1.0_amd64.deb
+          /usr/bin/rust-repair --version
+          test -f /usr/share/applications/rust-repair.desktop
+          test -f /usr/share/rust-repair/scripts/sandbox-runner.rs
+          test -f /usr/share/rust-repair/scripts/Containerfile
       - name: Upload binaries and resolved lockfile
         uses: actions/upload-artifact@v4
         with:

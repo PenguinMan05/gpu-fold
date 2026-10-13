@@ -21,6 +21,7 @@ enum JobResult {
     Tools(Vec<mcp::ToolPin>),
     Device(github::DeviceCode),
     SignedIn(bool),
+    ModelStatus(Settings, String),
 }
 struct App {
     engine: Engine,
@@ -51,6 +52,10 @@ struct App {
     last_poll: u64,
     runtime_consent: bool,
     context_preview: String,
+    gpu_live: bool,
+    gpu_status: String,
+    gpu_rx: Option<mpsc::Receiver<String>>,
+    gpu_poll: std::time::Instant,
     mcp_path: String,
     mcp_config: Option<mcp::Config>,
     mcp_name: String,
@@ -65,7 +70,7 @@ struct App {
 impl App {
     fn new(engine: Engine) -> Self {
         let settings = engine.store.settings().unwrap_or_default();
-        Self{engine,page:Page::Home,settings,url:String::new(),task:String::new(),issue:String::new(),sweep:false,run:None,proposal_json:String::new(),edit_proposal:false,message:"Choose a repository to begin. All changes remain local until you approve publishing.".into(),pending:None,cancel:process::cancel_token(),approve_exec:false,reviewed:BTreeSet::new(),rules:false,duplicates:false,issue_rule:false,responsibility:false,title:String::new(),body:String::new(),signoff:false,confirm_publish:false,token:String::new(),device:None,last_poll:0,runtime_consent:false,context_preview:String::new(),mcp_path:String::new(),mcp_config:None,mcp_name:String::new(),mcp_consent:false,tools:vec![],tool_index:0,tool_args:"{}".into(),tool_consent:false,tool_pinned:false,tool_readonly:true}
+        Self{engine,page:Page::Home,settings,url:String::new(),task:String::new(),issue:String::new(),sweep:false,run:None,proposal_json:String::new(),edit_proposal:false,message:"Choose a repository to begin. All changes remain local until you approve publishing.".into(),pending:None,cancel:process::cancel_token(),approve_exec:false,reviewed:BTreeSet::new(),rules:false,duplicates:false,issue_rule:false,responsibility:false,title:String::new(),body:String::new(),signoff:false,confirm_publish:false,token:String::new(),device:None,last_poll:0,runtime_consent:false,context_preview:String::new(),gpu_live:false,gpu_status:String::new(),gpu_rx:None,gpu_poll:std::time::Instant::now(),mcp_path:String::new(),mcp_config:None,mcp_name:String::new(),mcp_consent:false,tools:vec![],tool_index:0,tool_args:"{}".into(),tool_consent:false,tool_pinned:false,tool_readonly:true}
     }
     fn job<F>(&mut self, f: F)
     where
@@ -124,6 +129,10 @@ impl App {
                 Ok(JobResult::Device(d)) => {
                     self.message = format!("Open {} and enter {}", d.verification_uri, d.user_code);
                     self.device = Some(d)
+                }
+                Ok(JobResult::ModelStatus(settings, message)) => {
+                    self.settings = settings;
+                    self.message = message;
                 }
                 Ok(JobResult::SignedIn(done)) => {
                     if done {
@@ -726,6 +735,22 @@ impl App {
                 }
             }
         });
+        if ui.button("Estimate selected model memory").clicked() {
+            let model = PathBuf::from(&self.settings.model_path);
+            let context = self.settings.context_tokens + self.settings.max_output_tokens + 512;
+            self.job(move |_, _| {
+                Ok(JobResult::Message(repair_core::runtime::memory_estimate(
+                    &model, context,
+                )?))
+            });
+        }
+        ui.checkbox(
+            &mut self.gpu_live,
+            "Show live NVIDIA load, free VRAM and temperature",
+        );
+        if !self.gpu_status.is_empty() {
+            ui.label(&self.gpu_status);
+        }
         ui.label("Model license (record the license supplied with your model)");
         ui.text_edit_singleline(&mut self.settings.model_license);
         ui.checkbox(
@@ -761,11 +786,21 @@ impl App {
         }
         if ui.button("Check local model connection").clicked() {
             let settings = self.settings.clone();
-            self.job(move |_, _| {
-                Ok(JobResult::Message(format!(
-                    "Available local models: {}",
-                    repair_core::model::health(&settings)?
-                )))
+            self.job(move |e, _| {
+                let models = repair_core::model::health(&settings)?;
+                let mut settings = settings;
+                let ids = models
+                    .split(", ")
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>();
+                if ids.len() == 1 {
+                    settings.model_id = ids[0].into();
+                    e.store.save_settings(&settings)?;
+                }
+                Ok(JobResult::ModelStatus(
+                    settings,
+                    format!("Available local models: {models}"),
+                ))
             });
         }
         if let Ok(r) = self.engine.runtime.lock() {
@@ -1122,6 +1157,24 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.observe();
+        if let Some(result) = self.gpu_rx.as_ref().and_then(|r| r.try_recv().ok()) {
+            self.gpu_status = result;
+            self.gpu_rx = None;
+        }
+        if self.gpu_live
+            && self.gpu_rx.is_none()
+            && self.gpu_poll.elapsed() > std::time::Duration::from_secs(2)
+        {
+            self.gpu_poll = std::time::Instant::now();
+            let (tx, rx) = mpsc::channel();
+            self.gpu_rx = Some(rx);
+            std::thread::spawn(move || {
+                let value = repair_core::runtime::gpu_status(&process::cancel_token())
+                    .unwrap_or_else(|e| format!("GPU status unavailable: {e}"));
+                let _ = tx.send(value);
+            });
+        }
+
         ctx.request_repaint_after(std::time::Duration::from_millis(150));
         egui::TopBottomPanel::top("top").show(ctx,|ui|{ui.horizontal(|ui|{ui.heading("Rust Repair");ui.separator();for(label,page)in [("Home",Page::Home),("Task",Page::Task),("Review",Page::Review),("History",Page::History),("Model & settings",Page::Settings),("MCP",Page::Mcp)]{ui.selectable_value(&mut self.page,page,label);}if self.pending.is_some(){ui.spinner();if ui.button("Stop").clicked(){self.cancel.store(true,Ordering::SeqCst);if let Ok(mut r)=self.engine.runtime.lock(){r.unload();}self.message="Stop requested. External model servers may finish already submitted inference.".into();}}});});
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
