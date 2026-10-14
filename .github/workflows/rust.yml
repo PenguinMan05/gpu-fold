@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev libxkbcommon-x11-0 libx11-dev libxi-dev libxrandr-dev libxcursor-dev libxinerama-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev libxkbcommon-x11-0 libx11-dev libxi-dev libxrandr-dev libxcursor-dev libxinerama-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev xdotool
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -25,6 +25,11 @@ jobs:
         with:
           name: resolved-lockfile
           path: Cargo.lock
+      - name: Format source for build diagnostics
+        run: |
+          mkdir -p dist
+          cargo fmt --all
+          git diff --binary > dist/source-format.patch
       - name: Engine regression tests
         run: cargo test --locked --workspace
       - name: Check workspace
@@ -56,7 +61,9 @@ jobs:
         run: bash scripts/package-deb.sh
       - name: Install and verify package
         run: |
-          sudo dpkg -i dist/rust-repair_0.1.0_amd64.deb
+          sudo dpkg -i dist/GPUFold_*_amd64-*.deb
+          /usr/bin/gpufold-cli --version
+          test -L /usr/bin/gpufold
           /usr/bin/rust-repair --version
           test -f /usr/share/applications/rust-repair.desktop
           test -f /usr/share/rust-repair/scripts/sandbox-runner.rs
@@ -74,3 +81,34 @@ jobs:
         with:
           name: failed-verification
           path: dist/
+
+  release:
+    name: Publish verified Debian release
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-build
+          path: release-assets
+      - name: Verify package and publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          tag="v${version}"
+          (cd release-assets/dist && sha256sum -c ./*.deb.sha256)
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; existing assets are preserved."
+          else
+            gh release create "$tag" release-assets/dist/GPUFold_*.deb release-assets/dist/GPUFold_*.deb.sha256 \
+              --target "$GITHUB_SHA" --title "GPUFold ${version} — guided setup" \
+              --notes-file docs/RELEASE_NOTES.md --prerelease
+          fi

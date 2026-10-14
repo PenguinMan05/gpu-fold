@@ -157,6 +157,10 @@ pub struct Settings {
     pub model_path: String,
     pub model_license: String,
     pub cpu: bool,
+    pub runtime_kind: String,
+    pub model_service: String,
+    pub setup_complete: bool,
+    pub last_repository: String,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -176,6 +180,10 @@ impl Default for Settings {
             model_path: String::new(),
             model_license: String::new(),
             cpu: false,
+            runtime_kind: "mistralrs".into(),
+            model_service: "lm_studio".into(),
+            setup_complete: false,
+            last_repository: String::new(),
         }
     }
 }

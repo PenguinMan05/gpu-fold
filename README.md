@@ -6,20 +6,18 @@ The queue is the first local workflow toward the peer-to-peer GPU swarm describe
 
 ## Get started
 
-Build on Linux with Rust 1.90 or newer:
+Install the latest `.deb` from [GitHub Releases](https://github.com/PenguinMan05/gpu-fold/releases) and open **GPUFold** from your applications menu (or run `gpufold`). The package targets x86-64 Ubuntu 24.04 / Linux Mint 22 generation systems.
 
-```bash
-bash scripts/build-linux.sh --install
-```
+The first launch opens **Setup & settings**:
 
-The desktop app appears as **GPUFold**. The existing command-line binary is `rust-repair` for compatibility.
+1. Choose **LM Studio**, **Ollama**, **My model file**, or another local model server. Follow the on-screen steps and check the connection. A local model app / engine and weights must be installed separately.
+2. Prepare the isolated **Test environment**, or return to this step before verifying a repair.
+3. Finish setup, paste a public Rust repository URL in **Issues**, and click **Find open issues**.
+4. Select up to 10 issues and click **Start selected issues**. Each result has its own review screen with the next step explained.
 
-1. In **Model & settings**, choose your local model directory or GGUF file and installed inference runtime, or enter an existing local OpenAI-compatible endpoint. Choose a GPU-capable runtime for GPU inference; CPU mode is available where needed. GPUFold does not silently download model weights.
-2. Prepare the rootless Podman sandbox from **Home → Prepare test sandbox**, or run `bash scripts/build-sandbox.sh --approve-image-download` in a terminal. The base image is downloaded only after that explicit approval.
-3. In **Repository**, enter a public GitHub URL and select **Scan for unattended tickets**. GPUFold considers open issues with no assignees unattended; pull requests are excluded. Issue discovery does not require a GitHub token.
-4. Select up to 10 tickets and choose **Generate proposals**. GPUFold rechecks that each issue is still open and unassigned, pins the repository commit, then sends bounded public source context to your configured local model.
-5. Review each result in **Queue**. Approve its plan, review the changed files, apply the patch locally, and run the isolated baseline and verification steps. Queue processing does not run repository scripts, apply code, or publish anything.
-6. After level-3 test evidence, you can separately sign in and explicitly approve a draft pull request to your fork. GPUFold never merges a pull request or pushes to the upstream repository.
+See the [beginner guide and connection troubleshooting](docs/GETTING_STARTED.md). Public issues do not require GitHub sign-in. Code changes, project tests, and draft pull requests require separate review/approval.
+
+To build from source with Rust 1.90+: `bash scripts/build-linux.sh --install`. Existing `rust-repair` CLI and desktop binary names are retained for compatibility.
 
 ## What works in this build
 

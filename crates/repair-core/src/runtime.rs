@@ -25,38 +25,20 @@ impl ManagedRuntime {
             "Approve the exact local runtime command before loading a model"
         );
         ensure!(!self.running(), "Unload the current managed model first");
-        let exe = Path::new(&settings.runtime_path);
-        let model = Path::new(&settings.model_path);
-        ensure!(
-            exe.is_absolute() && exe.is_file(),
-            "Choose the installed mistralrs executable"
-        );
-        ensure!(
-            model.is_absolute() && model.exists(),
-            "Choose a complete local model directory or GGUF file"
-        );
         let endpoint = crate::model::local_url(&settings.endpoint)?;
-        ensure!(
-            endpoint.host_str() == Some("127.0.0.1"),
-            "Managed runtime requires 127.0.0.1"
-        );
         let port = endpoint
             .port()
             .context("Specify the runtime port in the endpoint")?;
+        ensure!(
+            std::net::TcpStream::connect_timeout(
+                &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+                Duration::from_millis(250)
+            ).is_err(),
+            "Another model server already uses this port. Choose Connect to a model app, or change the port in Advanced settings."
+        );
         std::fs::create_dir_all(workspace)?;
-        let mut command = Command::new(exe);
+        let mut command = launch_command(settings)?;
         command
-            .args([
-                "serve",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                &port.to_string(),
-                "-m",
-            ])
-            .arg(model)
-            .arg("--max-seq-len")
-            .arg((settings.context_tokens + settings.max_output_tokens + 512).to_string())
             .env_clear()
             .env("PATH", "/usr/local/bin:/usr/bin:/bin")
             .env("HOME", workspace)
@@ -67,9 +49,6 @@ impl ManagedRuntime {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if settings.cpu {
-            command.arg("--cpu");
-        }
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -129,6 +108,37 @@ impl ManagedRuntime {
             let _ = child.wait();
         }
     }
+}
+/// Build arguments without a shell. Selecting a GGUF must use mistralrs -f, not -m.
+pub fn launch_command(settings: &Settings) -> Result<Command> {
+    let exe = Path::new(&settings.runtime_path);
+    let model = Path::new(&settings.model_path);
+    ensure!(exe.is_absolute() && exe.is_file(), "Choose the model engine executable first.");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        ensure!(exe.metadata()?.permissions().mode() & 0o111 != 0, "The selected engine is not executable. Select the installed engine binary, not an archive or installer.");
+    }
+    ensure!(model.is_absolute() && model.exists(), "Choose an existing model folder or GGUF file first.");
+    let endpoint = crate::model::local_url(&settings.endpoint)?;
+    ensure!(endpoint.host_str() == Some("127.0.0.1"), "Managed models require the address 127.0.0.1.");
+    let port = endpoint.port().context("Set a port for the model engine.")?.to_string();
+    let context = (settings.context_tokens + settings.max_output_tokens + 512).to_string();
+    let mut command = Command::new(exe);
+    match settings.runtime_kind.as_str() {
+        "llama_cpp" => {
+            ensure!(model.is_file() && model.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("gguf")), "llama.cpp needs a GGUF model file. Use Choose GGUF file.");
+            command.args(["--host", "127.0.0.1", "--port", &port, "--model"])
+                .arg(model).args(["--ctx-size", &context, "--n-gpu-layers", if settings.cpu { "0" } else { "99" }]);
+        }
+        "mistralrs" => {
+            command.args(["serve", "--host", "127.0.0.1", "--port", &port, if model.is_file() { "-f" } else { "-m" }])
+                .arg(model).args(["--max-seq-len", &context]);
+            if settings.cpu { command.arg("--cpu"); }
+        }
+        _ => anyhow::bail!("Choose a supported model engine in Setup."),
+    }
+    Ok(command)
 }
 impl Drop for ManagedRuntime {
     fn drop(&mut self) {
@@ -200,4 +210,35 @@ pub fn memory_estimate(model: &Path, context: usize) -> Result<String> {
     };
     let gib = 1024f64 * 1024f64 * 1024f64;
     Ok(match kv {Some(kv)=>format!("Weights {:.2} GiB + estimated FP16 KV cache {:.2} GiB at {context} tokens + 1.5 GiB runtime reserve = {:.2} GiB. Compare with free VRAM; runtime/quantization can change this estimate.",weights as f64/gib,kv as f64/gib,(weights+kv)as f64/gib+1.5),None=>format!("Local weights: {:.2} GiB. KV-cache metadata unavailable; do not assume this fits VRAM. Use runtime diagnostics or CPU mode.",weights as f64/gib)})
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::*;
+
+    #[test]
+    fn local_gguf_launch_uses_file_flags_and_preserves_paths_as_single_arguments() {
+        let root = std::env::temp_dir().join(format!("gpufold-launch-{}-{}", std::process::id(), crate::types::now()));
+        std::fs::create_dir_all(&root).unwrap();
+        let model = root.join("my coder; model.gguf");
+        std::fs::write(&model, b"GGUF").unwrap();
+        let mut settings = Settings::default();
+        settings.runtime_path = "/bin/true".into();
+        settings.model_path = model.display().to_string();
+        let args = |s: &Settings| launch_command(s).unwrap().get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>();
+        let mistral = args(&settings);
+        let file_index = mistral.iter().position(|s| s == "-f").unwrap();
+        assert_eq!(mistral[file_index + 1], settings.model_path);
+        assert!(!mistral.contains(&"-m".to_owned()));
+        settings.runtime_kind = "llama_cpp".into();
+        settings.cpu = true;
+        let llama = args(&settings);
+        assert!(llama.windows(2).any(|w| w == ["--n-gpu-layers", "0"]));
+        assert!(llama.windows(2).any(|w| w[0] == "--model" && w[1] == settings.model_path));
+        settings.cpu = false;
+        assert!(args(&settings).windows(2).any(|w| w == ["--n-gpu-layers", "99"]));
+        settings.runtime_kind = "unknown".into();
+        assert!(launch_command(&settings).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

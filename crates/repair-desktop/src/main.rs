@@ -1,3 +1,5 @@
+mod onboarding;
+
 use anyhow::Context;
 use eframe::egui;
 use repair_core::{github, mcp, process, store, types::*, Engine, Store};
@@ -7,7 +9,7 @@ use std::{
     sync::{atomic::Ordering, mpsc},
 };
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 enum Page {
     Home,
     Task,
@@ -29,7 +31,9 @@ enum JobResult {
     Tools(Vec<mcp::ToolPin>),
     Device(github::DeviceCode),
     SignedIn(bool),
-    ModelStatus(Settings, String),
+    ModelStatus(Settings, Vec<String>),
+    ConnectionFailed(String),
+    SandboxStatus(bool, String),
 }
 #[derive(Clone)]
 struct QueueItemResult {
@@ -41,6 +45,15 @@ struct App {
     engine: Engine,
     page: Page,
     settings: Settings,
+    setup_step: usize,
+    connected_models: Vec<String>,
+    connection_key: Option<String>,
+    connection_error: Option<String>,
+    sandbox_ready: bool,
+    sandbox_status: String,
+    message_error: bool,
+    settings_snapshot: String,
+    save_after: Option<std::time::Instant>,
     url: String,
     task: String,
     issue: String,
@@ -93,12 +106,28 @@ struct App {
 }
 impl App {
     fn new(engine: Engine) -> Self {
-        let settings = engine.store.settings().unwrap_or_default();
-        Self {
+        let mut settings = engine.store.settings().unwrap_or_default();
+        if !settings.setup_complete && !settings.runtime_path.is_empty() && !settings.model_path.is_empty() {
+            settings.model_service = "file".into();
+        }
+        let settings_snapshot = serde_json::to_string(&settings).unwrap_or_default();
+        let page = if settings.setup_complete { Page::Home } else { Page::Settings };
+        let url = settings.last_repository.clone();
+        let reconnect = settings.setup_complete;
+        let mut app = Self {
             engine,
-            page: Page::Home,
+            page,
             settings,
-            url: String::new(),
+            setup_step: 0,
+            connected_models: vec![],
+            connection_key: None,
+            connection_error: None,
+            sandbox_ready: false,
+            sandbox_status: "Not prepared yet. You can set this up when you are ready to test a repair.".into(),
+            message_error: false,
+            settings_snapshot,
+            save_after: None,
+            url,
             task: String::new(),
             issue: String::new(),
             sweep: false,
@@ -147,7 +176,9 @@ impl App {
             tool_consent: false,
             tool_pinned: false,
             tool_readonly: true,
-        }
+        };
+        if reconnect { app.check_model(); }
+        app
     }
     fn job<F>(&mut self, f: F)
     where
@@ -161,6 +192,7 @@ impl App {
         self.cancel = token.clone();
         let (tx, rx) = mpsc::channel();
         self.pending = Some(rx);
+        self.message_error = false;
         self.message = "Working. You can stop at any time.".into();
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(e, token)))
@@ -188,7 +220,8 @@ impl App {
         let (progress_tx, progress_rx) = mpsc::channel();
         self.pending = Some(result_rx);
         self.progress = Some(progress_rx);
-        self.message = "Starting GPUFold queue…".into();
+        self.message_error = false;
+        self.message = "Starting… You can stop at any time.".into();
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 f(engine, cancel, progress_tx)
@@ -267,9 +300,24 @@ impl App {
                     self.message = format!("Open {} and enter {}", d.verification_uri, d.user_code);
                     self.device = Some(d)
                 }
-                Ok(JobResult::ModelStatus(settings, message)) => {
+                Ok(JobResult::ModelStatus(settings, models)) => {
                     self.settings = settings;
-                    self.message = message;
+                    self.connected_models = models;
+                    self.connection_key = Some(runtime_approval_key(&self.settings));
+                    self.connection_error = None;
+                    self.message_error = false;
+                    self.message = format!("Model connected: {}. You can now start selected issues.", self.settings.model_id);
+                }
+                Ok(JobResult::ConnectionFailed(error)) => {
+                    self.connection_key = None;
+                    self.connection_error = Some(error);
+                    self.message_error = true;
+                    self.message = "Your model is not connected. Open Setup to start a model app or load a model file, then check the connection.".into();
+                }
+                Ok(JobResult::SandboxStatus(ready, status)) => {
+                    self.sandbox_ready = ready;
+                    self.sandbox_status = status.clone();
+                    self.message = status;
                 }
                 Ok(JobResult::SignedIn(done)) => {
                     if done {
@@ -280,6 +328,7 @@ impl App {
                     }
                 }
                 Err(e) => {
+                    self.message_error = true;
                     self.message = e;
                     if let Some(r) = &self.run {
                         if let Ok(latest) = self.engine.store.get(&r.id) {
@@ -318,160 +367,10 @@ impl App {
                     &cancel,
                 )?;
                 process::success(output)?;
-                Ok(JobResult::Message(
-                    "SUCCESS: rootless test sandbox is ready. Repository tests stay offline inside it.".into(),
+                Ok(JobResult::SandboxStatus(true,
+                    "Test environment ready. You can now verify reviewed repairs.".into(),
                 ))
             });
-        }
-    }
-    fn home_page(&mut self, ui: &mut egui::Ui) {
-        egui::Frame::group(ui.style())
-            .inner_margin(egui::Margin::same(18.0))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.heading("Work through unattended GitHub issues on your GPU");
-                        ui.label("Point GPUFold at a public repository, choose your local model, and review repair proposals one ticket at a time.");
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(egui::RichText::new("LOCAL FIRST").strong().color(egui::Color32::from_rgb(36, 104, 82)));
-                    });
-                });
-            });
-
-        ui.add_space(12.0);
-        ui.heading("Get started");
-            ui.label("The demo uses a supplied fix and never publishes. Queue processing uses your selected local model; test execution stays behind a separate approval.");
-        ui.add_space(6.0);
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_sized([220.0, 38.0], egui::Button::new("Try the known-bug demo"))
-                .clicked()
-            {
-                self.job(|e, _| {
-                    let mut r = e.fixture()?;
-                    let p: Proposal =
-                        serde_json::from_str(include_str!("../../../fixtures/fix-add.json"))?;
-                    e.replace_proposal(&mut r, p)?;
-                    Ok(JobResult::Run(r))
-                });
-            }
-            if ui
-                .add_sized([220.0, 38.0], egui::Button::new("Scan repository tickets"))
-                .clicked()
-            {
-                self.page = Page::Task;
-            }
-            if ui
-                .add_sized([190.0, 38.0], egui::Button::new("Configure local model"))
-                .clicked()
-            {
-                self.page = Page::Settings;
-            }
-        });
-
-        ui.add_space(14.0);
-        ui.columns(3, |columns| {
-            for (column, (number, title, detail)) in columns.iter_mut().zip([
-                (
-                    "01",
-                    "Choose your model",
-                    "Select local model files and a GPU-capable runtime or loopback endpoint.",
-                ),
-                (
-                    "02",
-                    "Queue unattended issues",
-                    "GPUFold finds open, unassigned issues and processes them in order.",
-                ),
-                (
-                    "03",
-                    "Review every repair",
-                    "Proposals are not applied or published until you review them.",
-                ),
-            ]) {
-                egui::Frame::group(column.style())
-                    .inner_margin(egui::Margin::same(12.0))
-                    .show(column, |ui| {
-                        ui.label(
-                            egui::RichText::new(number)
-                                .strong()
-                                .color(egui::Color32::from_rgb(76, 103, 164)),
-                        );
-                        ui.label(
-                            egui::RichText::new(title)
-                                .strong()
-                                .color(egui::Color32::from_rgb(35, 48, 74)),
-                        );
-                        ui.label(detail);
-                    });
-            }
-        });
-
-        ui.add_space(14.0);
-        egui::Frame::group(ui.style())
-            .inner_margin(egui::Margin::same(14.0))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading("Test sandbox");
-                    ui.label("Rootless Podman · offline repository tests");
-                });
-                self.build_sandbox_button(ui);
-                ui.small("Setup downloads the official Rust base image only after you approve it. Later test runs do not pull images.");
-            });
-
-        ui.add_space(14.0);
-        let running = self
-            .engine
-            .runtime
-            .lock()
-            .map(|mut r| r.running())
-            .unwrap_or(false);
-        egui::Frame::group(ui.style())
-            .inner_margin(egui::Margin::same(14.0))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading("Local model");
-                    ui.label(if running { "Managed runtime running" } else { "Managed runtime stopped" });
-                });
-                ui.label(format!("Endpoint: {}", self.settings.endpoint));
-                if self.settings.runtime_path.is_empty() || self.settings.model_path.is_empty() {
-                    ui.small("No managed runtime is configured. You can also use an existing local endpoint.");
-                }
-                if self.gpu_live && !self.gpu_status.is_empty() {
-                    ui.label(&self.gpu_status);
-                }
-            });
-
-        ui.add_space(14.0);
-        ui.heading("Recent runs");
-        match self.engine.store.list() {
-            Ok(runs) if runs.is_empty() => {
-                ui.label("Your saved runs will appear here.");
-            }
-            Ok(runs) => {
-                for r in runs.into_iter().take(5) {
-                    ui.horizontal(|ui| {
-                        ui.label(format!("{}/{}", r.owner, r.repo));
-                        ui.label(format!("{:?}", r.state));
-                        ui.label(format!("Evidence {}", r.evidence.level));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("Open review").clicked() {
-                                self.run = Some(r.clone());
-                                self.reviewed.clear();
-                                self.confirm_publish = false;
-                                self.page = Page::Review;
-                            }
-                        });
-                    });
-                    ui.separator();
-                }
-            }
-            Err(error) => {
-                ui.colored_label(
-                    egui::Color32::RED,
-                    format!("Could not read local history: {error}"),
-                );
-            }
         }
     }
     fn queue_page(&mut self, ui: &mut egui::Ui) {
@@ -521,15 +420,17 @@ impl App {
                         }
                     });
                     if let Some(error) = &item.error {
-                        ui.colored_label(egui::Color32::YELLOW, error);
+                        ui.colored_label(onboarding::AMBER, error);
                     }
                 });
             ui.add_space(6.0);
         }
     }
     fn task_page(&mut self, ui: &mut egui::Ui) {
-        ui.heading("GPUFold · Repository ticket queue");
-        ui.label("Scan public GitHub issues, then use your selected local model to prepare repair proposals in order.");
+        ui.heading("Choose issues to work on");
+        self.model_banner(ui);
+        ui.label("1. Paste a public repository URL.   2. Find issues.   3. Select issues and start.");
+        ui.small("This version repairs Rust / Cargo projects with Cargo.lock. Other languages are not supported yet.");
         ui.label("Repository URL (https://github.com/owner/repository)");
         ui.add(egui::TextEdit::singleline(&mut self.url).desired_width(f32::INFINITY));
         ui.horizontal(|ui| {
@@ -547,7 +448,7 @@ impl App {
         if ui
             .add_enabled(
                 repository_is_valid,
-                egui::Button::new("Scan for unattended tickets"),
+                egui::Button::new("Find open issues"),
             )
             .clicked()
         {
@@ -556,6 +457,8 @@ impl App {
             self.tickets.clear();
             self.tickets_repository = None;
             self.selected_tickets.clear();
+            self.settings.last_repository = self.url.clone();
+            let _ = self.engine.store.save_settings(&self.settings);
             self.job(move |_, cancel| {
                 let (owner, repo) = github::parse_repo(&url)?;
                 let tickets = github::tickets(&owner, &repo, limit, true, &cancel)?;
@@ -570,7 +473,7 @@ impl App {
             tickets_match_repository(&self.url, self.tickets_repository.as_ref());
         if !self.tickets.is_empty() && !tickets_match_repository {
             ui.colored_label(
-                egui::Color32::YELLOW,
+                onboarding::AMBER,
                 "The repository URL changed. Scan it again before selecting or processing tickets.",
             );
         }
@@ -616,8 +519,9 @@ impl App {
                 }
                 ui.label(format!("{selected_count} selected"));
             });
+            egui::ScrollArea::vertical().id_salt("issue_list").max_height(320.0).show(ui, |ui| {
             for ticket in &self.tickets {
-                ui.horizontal_wrapped(|ui| {
+                egui::Frame::group(ui.style()).inner_margin(egui::Margin::same(10.0)).show(ui, |ui| { ui.horizontal_wrapped(|ui| {
                     let was_seen = seen.contains(&ticket.number);
                     let can_select = !self.skip_seen_tickets || !was_seen;
                     let mut selected = self.selected_tickets.contains(&ticket.number);
@@ -646,21 +550,23 @@ impl App {
                         ui.weak(ticket.labels.join(" · "));
                     }
                 });
+                });
             }
+            });
             if selected_count > 10 {
                 ui.colored_label(
-                    egui::Color32::YELLOW,
+                    onboarding::AMBER,
                     "Process up to 10 tickets per batch to keep local storage manageable.",
                 );
             }
             let queue_is_ready = selected_count > 0
                 && selected_count <= 10
-                && !self.settings.endpoint.trim().is_empty();
+                && self.model_ready();
             if ui
                 .add_enabled(
                     queue_is_ready,
                     egui::Button::new(format!(
-                        "Generate proposals for {} selected ticket(s)",
+                        "Start {} selected issue(s)",
                         selected_count
                     )),
                 )
@@ -680,8 +586,11 @@ impl App {
                 self.queue_results.clear();
                 self.progress_job(move |engine, cancel, progress| {
                     let _ = progress.send("Checking the configured local model".into());
-                    repair_core::model::health(&settings)
-                        .context("Connect and check your selected local model before processing tickets")?;
+                    match repair_core::model::available_models(&settings) {
+                        Ok(models) if models.contains(&settings.model_id) => {},
+                        Ok(_) => return Ok(JobResult::ConnectionFailed("The selected model is no longer available. Check the connection and choose a model in Setup.".into())),
+                        Err(error) => return Ok(JobResult::ConnectionFailed(format!("{error:#}"))),
+                    }
                     let _ = progress.send("Pinning the repository snapshot for this queue".into());
                     let (owner, repo) = github::parse_repo(&url)?;
                     let metadata = github::public_repo(&owner, &repo)?;
@@ -752,10 +661,15 @@ impl App {
                     Ok(JobResult::Queue(results))
                 });
             }
+            if !self.model_ready() { ui.label("Connect your model in Setup to enable Start."); }
             ui.small("Tickets are analyzed sequentially. GPUFold does not run repository scripts, apply patches, or publish pull requests during queue processing; review and verify each proposal first.");
         }
 
-        ui.separator();
+        if self.tickets_repository.is_some() && self.tickets.is_empty() && tickets_match_repository {
+            ui.label("No open, unassigned issues were found in this scan. Try another repository or increase the scan limit.");
+        }
+        ui.add_space(16.0);
+        egui::CollapsingHeader::new("Advanced: work on one specific task or scan for bugs").show(ui, |ui| {
         ui.heading("One-off task or bug sweep");
         ui.label("The repository commit is pinned before source is read.");
         ui.checkbox(&mut self.sweep, "Bug sweep (findings only; no patches)");
@@ -897,7 +811,7 @@ impl App {
                             | State::NoFix
                             | State::Cancelled
                             | State::Review
-                    ) && r.attempts < 3,
+                    ) && r.attempts < 3 && self.model_ready(),
                     egui::Button::new("Analyze with my local model"),
                 )
                 .clicked()
@@ -911,13 +825,21 @@ impl App {
                 });
             }
         }
+            });
     }
     fn review_page(&mut self, ui: &mut egui::Ui) {
         let Some(r) = self.run.clone() else {
-            ui.label("Open a repository first.");
+            ui.label("Choose a saved result in Results or History to review its repair.");
             return;
         };
-        ui.heading(format!("Review - {:?}", r.state));
+        ui.heading("Review this repair");
+        ui.label(format!("{}/{}{}", r.owner, r.repo, r.issue_number.map(|n| format!(" · issue #{n}")).unwrap_or_default()));
+        ui.label(onboarding::review_guidance(&r.state));
+        ui.horizontal_wrapped(|ui| {
+            for (name, active) in [("1. Review plan", r.state == State::AwaitPlan), ("2. Review changes", r.state == State::AwaitPatch), ("3. Test repair", matches!(r.state, State::Patched | State::Review)), ("4. Draft pull request", r.state == State::Published)] {
+                if active { ui.strong(name); } else { ui.weak(name); }
+            }
+        });
         ui.label(format!(
             "Evidence level {}: {}",
             r.evidence.level, r.evidence.reason
@@ -1039,7 +961,8 @@ impl App {
                 return;
             }
 
-            ui.heading("Model proposal (untrusted claim)");
+            ui.heading("What the model found");
+            ui.small("Check this explanation and the proposed changes before approving.");
             ui.add(egui::Label::new(&p.explanation).selectable(true));
             for cite in &p.citations {
                 ui.collapsing(format!("{}:{}", cite.path, cite.start_line), |ui| {
@@ -1047,7 +970,7 @@ impl App {
                 });
             }
             ui.label(format!("Planned files: {}", p.planned_files.join(", ")));
-            if r.state == State::AwaitPlan && ui.button("Approve plan").clicked() {
+            if r.state == State::AwaitPlan && ui.button("Approve plan and review changes").clicked() {
                 self.job(move |e, _| {
                     let mut r = r;
                     e.approve_plan(&mut r)?;
@@ -1287,193 +1210,33 @@ impl App {
             ui.hyperlink_to("Open created pull request", url);
         }
     }
-    fn settings_page(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Local model and GPU");
-        ui.label("Connect to an existing local model, or explicitly start your installed mistralrs runtime with a complete model folder or GGUF file. Model downloads are never automatic.");
-        ui.label("Installed mistralrs executable");
-        ui.horizontal(|ui| {
-            ui.text_edit_singleline(&mut self.settings.runtime_path);
-            if ui.button("Browse runtime").clicked() {
-                if let Some(p) = rfd::FileDialog::new().pick_file() {
-                    self.settings.runtime_path = p.display().to_string();
-                }
-            }
-        });
-        ui.label("Local model directory or GGUF file");
-        ui.horizontal(|ui| {
-            ui.text_edit_singleline(&mut self.settings.model_path);
-            if ui.button("Browse folder").clicked() {
-                if let Some(p) = rfd::FileDialog::new().pick_folder() {
-                    self.settings.model_path = p.display().to_string();
-                }
-            }
-            if ui.button("Browse GGUF file").clicked() {
-                if let Some(p) = rfd::FileDialog::new()
-                    .add_filter("GGUF model", &["gguf"])
-                    .pick_file()
-                {
-                    self.settings.model_path = p.display().to_string();
-                }
-            }
-        });
-        if ui.button("Estimate selected model memory").clicked() {
-            let model = PathBuf::from(&self.settings.model_path);
-            let context = self.settings.context_tokens + self.settings.max_output_tokens + 512;
-            self.job(move |_, _| {
-                Ok(JobResult::Message(repair_core::runtime::memory_estimate(
-                    &model, context,
-                )?))
-            });
-        }
-        ui.checkbox(
-            &mut self.gpu_live,
-            "Show live NVIDIA load, free VRAM and temperature",
-        );
-        if !self.gpu_status.is_empty() {
-            ui.label(&self.gpu_status);
-        }
-        ui.label("Model license (record the license supplied with your model)");
+    fn advanced_settings_page(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Performance and diagnostics");
+        ui.small("The defaults work for small coding tasks. Model connection and file selection are in step 1 above.");
+        ui.checkbox(&mut self.gpu_live, "Show live NVIDIA GPU memory, utilization and temperature");
+        if !self.gpu_status.is_empty() { ui.label(&self.gpu_status); }
+        ui.add(egui::Slider::new(&mut self.settings.context_tokens, 2048..=16384).text("Input token budget"));
+        ui.add(egui::Slider::new(&mut self.settings.context_chars, 2000..=64000).text("Source character budget"));
+        ui.add(egui::Slider::new(&mut self.settings.max_output_tokens, 512..=8192).text("Maximum output tokens"));
+        ui.label("Model license (optional record)");
         ui.text_edit_singleline(&mut self.settings.model_license);
-        ui.checkbox(
-            &mut self.settings.cpu,
-            "Use CPU instead of GPU (generation will be slower)",
-        );
-        if ui.button("Unload managed model").clicked() {
-            if let Ok(mut r) = self.engine.runtime.lock() {
-                r.unload();
-            }
-            self.message = "Managed model stopped and its GPU resources released.".into();
-        }
-        if ui.button("Check local model connection").clicked() {
-            let settings = self.settings.clone();
-            self.job(move |e, _| {
-                let models = repair_core::model::health(&settings)?;
-                let mut settings = settings;
-                let ids = models
-                    .split(", ")
-                    .filter(|s| !s.is_empty())
-                    .collect::<Vec<_>>();
-                if ids.len() == 1 {
-                    settings.model_id = ids[0].into();
-                    e.store.save_settings(&settings)?;
-                }
-                Ok(JobResult::ModelStatus(
-                    settings,
-                    format!("Available local models: {models}"),
-                ))
-            });
-        }
-        if let Ok(r) = self.engine.runtime.lock() {
-            if let Ok(log) = r.log.lock() {
-                ui.collapsing("Local runtime log", |ui| {
-                    ui.add(
-                        egui::Label::new(egui::RichText::new(&*log).monospace()).selectable(true),
-                    );
-                });
-            }
-        }
-        ui.label(
-            "Tokenizer JSON for accurate input budgeting (otherwise conservative byte budget)",
-        );
+        ui.label("Tokenizer JSON (optional; improves context estimates)");
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.settings.tokenizer_path);
-            if ui.button("Browse tokenizer").clicked() {
-                if let Some(p) = rfd::FileDialog::new()
-                    .add_filter("Tokenizer JSON", &["json"])
-                    .pick_file()
-                {
-                    self.settings.tokenizer_path = p.display().to_string();
-                }
-            }
+            if ui.button("Choose tokenizer").clicked() { if let Some(p) = rfd::FileDialog::new().add_filter("Tokenizer", &["json"]).pick_file() { self.settings.tokenizer_path = p.display().to_string(); } }
         });
-        ui.add(
-            egui::Slider::new(&mut self.settings.context_tokens, 2048..=16384)
-                .text("Input token budget"),
-        );
-        ui.label("OpenAI-compatible chat endpoint");
-        ui.text_edit_singleline(&mut self.settings.endpoint);
-        ui.label("Model identifier served by that endpoint");
-        ui.text_edit_singleline(&mut self.settings.model_id);
-        ui.label("Weights file (optional; SHA256 recorded, server/model match is user verified)");
+        ui.label("Weights file to hash for run records (optional)");
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.settings.weights_path);
-            if ui.button("Browse weights").clicked() {
-                if let Some(p) = rfd::FileDialog::new().pick_file() {
-                    self.settings.weights_path = p.display().to_string();
-                }
-            }
+            if ui.button("Choose weights").clicked() { if let Some(p) = rfd::FileDialog::new().pick_file() { self.settings.weights_path = p.display().to_string(); } }
         });
-        ui.add(
-            egui::Slider::new(&mut self.settings.context_chars, 2000..=64000)
-                .text("Context character budget"),
-        );
-        ui.add(
-            egui::Slider::new(&mut self.settings.max_output_tokens, 512..=8192)
-                .text("Maximum output tokens"),
-        );
-        let approved_command = runtime_approval_key(&self.settings);
-        let mut approved = self.runtime_approval.as_deref() == Some(&approved_command);
-        if ui
-            .checkbox(
-                &mut approved,
-                "I approve this exact local runtime command and selected model",
-            )
-            .changed()
-        {
-            self.runtime_approval = approved.then(|| approved_command.clone());
+        if ui.button("Stop managed model and release memory").clicked() {
+            if let Ok(mut runtime) = self.engine.runtime.lock() { runtime.unload(); }
+            self.connection_key = None;
+            self.message = "Model stopped. Start it again in Setup before running issues.".into();
         }
-        ui.collapsing("Review launch command", |ui| {
-            ui.monospace(format!(
-                "{:?} serve --host 127.0.0.1 --port <port from endpoint> -m {:?} --max-seq-len {}{}",
-                self.settings.runtime_path,
-                self.settings.model_path,
-                self.settings.context_tokens + self.settings.max_output_tokens + 512,
-                if self.settings.cpu { " --cpu" } else { "" }
-            ));
-            ui.small(format!("The endpoint currently configured is {}", self.settings.endpoint));
-        });
-        if ui
-            .add_enabled(approved, egui::Button::new("Load local model"))
-            .clicked()
-        {
-            let settings = self.settings.clone();
-            self.job(move |e, _| {
-                e.store.save_settings(&settings)?;
-                e.runtime
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("Runtime state unavailable"))?
-                    .load(&settings, &e.store.root.join("model-runtime"), true)?;
-                Ok(JobResult::Message(
-                    "Local model process started. Check connection when loading finishes.".into(),
-                ))
-            });
-        }
-        if ui.button("Check NVIDIA GPU").clicked() {
-            self.job(|_, c| {
-                let mut cmd = std::process::Command::new("nvidia-smi");
-                cmd.env_clear()
-                    .env("PATH", "/usr/local/bin:/usr/bin:/bin")
-                    .args([
-                        "--query-gpu=name,memory.total,memory.free,utilization.gpu,temperature.gpu",
-                        "--format=csv,noheader",
-                    ]);
-                let o = process::success(process::run(
-                    cmd,
-                    vec!["nvidia-smi".into()],
-                    std::time::Duration::from_secs(10),
-                    &c,
-                )?)?;
-                Ok(JobResult::Message(format!(
-                    "GPU / total VRAM / free VRAM / load / temperature:\n{}",
-                    o.output
-                )))
-            });
-        }
-        ui.separator();
-        ui.heading("Test sandbox");
-        ui.label("Local image name (must be built explicitly; app never pulls images)");
+        ui.label("Local test image (advanced)");
         ui.text_edit_singleline(&mut self.settings.image);
-        ui.label("See scripts/build-sandbox.sh for the rootless Podman image.");
         ui.separator();
         ui.heading("GitHub sign-in");
         ui.label("Optional OAuth app client ID with device flow enabled (registration required; no app server)");
@@ -1794,36 +1557,38 @@ impl eframe::App for App {
             });
         }
 
+        if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Num1)) { self.page = Page::Home; }
+        if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Num2)) { self.page = Page::Settings; }
+        if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Num3)) { self.page = Page::Task; }
         ctx.request_repaint_after(std::time::Duration::from_millis(150));
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("GPUFold");
                 ui.separator();
-                for (label, page) in [
-                    ("Home", Page::Home),
-                    ("Repository", Page::Task),
-                    ("Queue", Page::Queue),
-                    ("Review", Page::Review),
-                    ("History", Page::History),
-                    ("Model & settings", Page::Settings),
-                    ("MCP", Page::Mcp),
-                ] {
-                    ui.selectable_value(&mut self.page, page, label);
-                }
-                if self.pending.is_some() {
-                    ui.spinner();
-                    if ui.button("Stop").clicked() {
-                        self.cancel.store(true, Ordering::SeqCst);
-                        if let Ok(mut runtime) = self.engine.runtime.lock() {
-                            runtime.unload();
-                        }
-                        self.message = "Stop requested. An already submitted local inference may finish shortly.".into();
-                    }
-                }
+                ui.label("Local AI issue assistant");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (label, color) = if self.model_ready() { ("Model connected", onboarding::GREEN) } else { ("Model not connected", onboarding::AMBER) };
+                    ui.colored_label(color, label);
+                });
             });
         });
+        let snapshot = serde_json::to_string(&self.settings).unwrap_or_default();
+        if snapshot != self.settings_snapshot {
+            self.settings_snapshot = snapshot;
+            self.save_after = Some(std::time::Instant::now());
+        }
+        if self.pending.is_none() && self.save_after.is_some_and(|time| time.elapsed() > std::time::Duration::from_millis(600)) {
+            self.save_after = None;
+            if let Err(error) = self.engine.store.save_settings(&self.settings) {
+                self.message_error = true;
+                self.message = format!("Could not save settings: {error}");
+            }
+        }
+        self.navigation(ctx);
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            ui.add(egui::Label::new(&self.message).selectable(true));
+            egui::ScrollArea::vertical().id_salt("status_scroll").max_height(130.0).show(ui, |ui| {
+            ui.add(egui::Label::new(&self.message).wrap().selectable(true));
+            });
             if self.pending.is_some() {
                 if let Ok(activity) = self.engine.activity.lock() {
                     if !activity.is_empty() {
@@ -1844,7 +1609,18 @@ impl eframe::App for App {
             }
         });
         egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
+            egui::ScrollArea::vertical().id_salt(format!("page_{:?}", self.page)).show(ui, |ui| {
+                ui.set_max_width(1020.0);
+                ui.add_space(12.0);
+                if self.message_error && self.page != Page::Settings {
+                    onboarding::card(ui, |ui| {
+                        ui.colored_label(onboarding::AMBER, "This step needs attention");
+                        ui.label(onboarding::friendly_error(&self.message));
+                        if self.connection_error.is_some() && ui.button("Open model setup").clicked() { self.setup_step = 0; self.page = Page::Settings; }
+                        ui.collapsing("Technical details", |ui| { ui.label(&self.message); });
+                    });
+                    ui.add_space(12.0);
+                }
                 ui.add_enabled_ui(self.pending.is_none(), |ui| match self.page {
                     Page::Home => self.home_page(ui),
                     Page::Task => self.task_page(ui),
@@ -1870,7 +1646,9 @@ impl eframe::App for App {
 fn runtime_approval_key(settings: &Settings) -> String {
     let command = serde_json::to_vec(&(
         &settings.runtime_path,
+        &settings.runtime_kind,
         &settings.model_path,
+        &settings.model_id,
         &settings.endpoint,
         settings.cpu,
         settings.context_tokens,
@@ -1930,7 +1708,10 @@ fn main() -> eframe::Result<()> {
             let mut style = (*cc.egui_ctx.style()).clone();
             style.spacing.item_spacing = egui::vec2(10.0, 8.0);
             style.spacing.button_padding = egui::vec2(12.0, 7.0);
-            style.spacing.interact_size.y = 30.0;
+            style.spacing.interact_size.y = 36.0;
+            style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(16.0));
+            style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(16.0));
+            style.text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(13.0));
             let mut visuals = egui::Visuals::light();
             visuals.panel_fill = egui::Color32::from_rgb(250, 251, 253);
             visuals.window_fill = egui::Color32::from_rgb(250, 251, 253);
@@ -1939,6 +1720,10 @@ fn main() -> eframe::Result<()> {
             visuals.widgets.noninteractive.bg_stroke.color = egui::Color32::from_rgb(222, 227, 236);
             visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(239, 243, 250);
             visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(239, 243, 250);
+            visuals.widgets.inactive.fg_stroke.color = egui::Color32::from_rgb(43, 56, 78);
+            visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(127, 144, 169));
+            visuals.widgets.hovered.fg_stroke.color = egui::Color32::from_rgb(24, 46, 80);
+            visuals.widgets.noninteractive.fg_stroke.color = egui::Color32::from_rgb(43, 56, 78);
             visuals.widgets.inactive.rounding = egui::Rounding::same(6.0);
             visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(222, 232, 249);
             visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(222, 232, 249);
@@ -1949,6 +1734,8 @@ fn main() -> eframe::Result<()> {
             visuals.selection.stroke.color = egui::Color32::WHITE;
             visuals.hyperlink_color = egui::Color32::from_rgb(47, 86, 151);
             visuals.window_rounding = egui::Rounding::same(10.0);
+            visuals.override_text_color = Some(egui::Color32::from_rgb(35, 48, 68));
+            visuals.text_edit_bg_color = Some(egui::Color32::WHITE);
             style.visuals = visuals;
             cc.egui_ctx.set_style(style);
             Ok(Box::new(App::new(engine)))

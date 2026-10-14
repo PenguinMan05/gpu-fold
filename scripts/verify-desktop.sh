@@ -11,6 +11,18 @@
     kill -0 "$app_pid"
   done
   import -window root dist/desktop-preview.png
+  app_window="$(xdotool search --onlyvisible --pid "$app_pid" | head -n 1)"
+  test -n "$app_window"
+  xdotool key --window "$app_window" ctrl+1
+  sleep 1
+  import -window root dist/dashboard-preview.png
+  xdotool key --window "$app_window" ctrl+3
+  sleep 1
+  import -window root dist/issues-preview.png
+  xdotool key --window "$app_window" ctrl+2
+  sleep 1
+  import -window root dist/setup-preview.png
+  kill -0 "$app_pid"
   test -s dist/desktop-preview.png
   echo "SUCCESS: native desktop remained running and a screenshot was captured."
 )
