@@ -11,6 +11,7 @@ use std::{
 enum Page {
     Home,
     Task,
+    Queue,
     Review,
     Settings,
     Mcp,
@@ -19,10 +20,22 @@ enum Page {
 enum JobResult {
     Run(Run),
     Message(String),
+    Tickets {
+        owner: String,
+        repo: String,
+        tickets: Vec<github::Ticket>,
+    },
+    Queue(Vec<QueueItemResult>),
     Tools(Vec<mcp::ToolPin>),
     Device(github::DeviceCode),
     SignedIn(bool),
     ModelStatus(Settings, String),
+}
+#[derive(Clone)]
+struct QueueItemResult {
+    ticket: github::Ticket,
+    run: Option<Run>,
+    error: Option<String>,
 }
 struct App {
     engine: Engine,
@@ -32,11 +45,18 @@ struct App {
     task: String,
     issue: String,
     sweep: bool,
+    ticket_limit: usize,
+    tickets: Vec<github::Ticket>,
+    tickets_repository: Option<(String, String)>,
+    selected_tickets: BTreeSet<u64>,
+    skip_seen_tickets: bool,
+    queue_results: Vec<QueueItemResult>,
     run: Option<Run>,
     proposal_json: String,
     edit_proposal: bool,
     message: String,
     pending: Option<mpsc::Receiver<Result<JobResult, String>>>,
+    progress: Option<mpsc::Receiver<String>>,
     cancel: process::Cancel,
     approve_exec: bool,
     reviewed: BTreeSet<String>,
@@ -82,11 +102,18 @@ impl App {
             task: String::new(),
             issue: String::new(),
             sweep: false,
+            ticket_limit: 100,
+            tickets: vec![],
+            tickets_repository: None,
+            selected_tickets: BTreeSet::new(),
+            skip_seen_tickets: true,
+            queue_results: vec![],
             run: None,
             proposal_json: String::new(),
             edit_proposal: false,
             message: "Choose a repository to begin. All changes remain local until you approve publishing.".into(),
             pending: None,
+            progress: None,
             cancel: process::cancel_token(),
             approve_exec: false,
             reviewed: BTreeSet::new(),
@@ -145,10 +172,45 @@ impl App {
             let _ = tx.send(result);
         });
     }
+    fn progress_job<F>(&mut self, f: F)
+    where
+        F: FnOnce(Engine, process::Cancel, mpsc::Sender<String>) -> anyhow::Result<JobResult>
+            + Send
+            + 'static,
+    {
+        if self.pending.is_some() {
+            return;
+        }
+        let engine = self.engine.clone();
+        let cancel = process::cancel_token();
+        self.cancel = cancel.clone();
+        let (result_tx, result_rx) = mpsc::channel();
+        let (progress_tx, progress_rx) = mpsc::channel();
+        self.pending = Some(result_rx);
+        self.progress = Some(progress_rx);
+        self.message = "Starting GPUFold queue…".into();
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                f(engine, cancel, progress_tx)
+            }))
+            .map_err(|_| {
+                "Queue worker stopped unexpectedly; saved runs can be inspected in History"
+                    .to_owned()
+            })
+            .and_then(|r| r.map_err(|e| format!("{e:#}")));
+            let _ = result_tx.send(result);
+        });
+    }
     fn observe(&mut self) {
+        if let Some(progress) = &self.progress {
+            while let Ok(status) = progress.try_recv() {
+                self.message = status;
+            }
+        }
         let result = self.pending.as_ref().and_then(|r| r.try_recv().ok());
         if let Some(result) = result {
             self.pending = None;
+            self.progress = None;
             match result {
                 Ok(JobResult::Run(r)) => {
                     let new = self.run.as_ref().map_or(true, |old| old.id != r.id);
@@ -168,6 +230,31 @@ impl App {
                     self.run = Some(r)
                 }
                 Ok(JobResult::Message(m)) => self.message = m,
+                Ok(JobResult::Tickets {
+                    owner,
+                    repo,
+                    tickets,
+                }) => {
+                    self.selected_tickets.clear();
+                    self.tickets = tickets;
+                    self.tickets_repository = Some((owner, repo));
+                    self.message = format!(
+                        "Found {} open unassigned issue(s). Select the tickets to process.",
+                        self.tickets.len()
+                    );
+                }
+                Ok(JobResult::Queue(results)) => {
+                    let proposed = results
+                        .iter()
+                        .filter(|item| item.run.as_ref().is_some_and(|r| r.proposal.is_some()))
+                        .count();
+                    let failed = results.iter().filter(|item| item.error.is_some()).count();
+                    self.queue_results = results;
+                    self.page = Page::Queue;
+                    self.message = format!(
+                        "Queue finished: {proposed} proposal(s), {failed} item(s) need attention. Review each proposal before applying it."
+                    );
+                }
                 Ok(JobResult::Tools(t)) => {
                     self.tools = t;
                     self.tool_pinned = false;
@@ -218,7 +305,7 @@ impl App {
             self.sandbox_consent = false;
             self.job(|_, cancel| {
                 let script = sandbox_script().context(
-                    "Sandbox setup script is missing. Reinstall Rust Repair or build from the source checkout.",
+                    "Sandbox setup script is missing. Reinstall GPUFold or build from the source checkout.",
                 )?;
                 let mut command = std::process::Command::new("bash");
                 command
@@ -243,8 +330,8 @@ impl App {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        ui.heading("Fix one Rust bug, with evidence");
-                        ui.label("Inspect a public repository, review a focused change, and verify it in an isolated sandbox.");
+                        ui.heading("Work through unattended GitHub issues on your GPU");
+                        ui.label("Point GPUFold at a public repository, choose your local model, and review repair proposals one ticket at a time.");
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(egui::RichText::new("LOCAL FIRST").strong().color(egui::Color32::from_rgb(36, 104, 82)));
@@ -254,7 +341,7 @@ impl App {
 
         ui.add_space(12.0);
         ui.heading("Get started");
-        ui.label("The demo uses a supplied fix and never publishes. A real repair needs a local model and the sandbox image.");
+            ui.label("The demo uses a supplied fix and never publishes. Queue processing uses your selected local model; test execution stays behind a separate approval.");
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
             if ui
@@ -270,7 +357,7 @@ impl App {
                 });
             }
             if ui
-                .add_sized([220.0, 38.0], egui::Button::new("Investigate a repository"))
+                .add_sized([220.0, 38.0], egui::Button::new("Scan repository tickets"))
                 .clicked()
             {
                 self.page = Page::Task;
@@ -288,18 +375,18 @@ impl App {
             for (column, (number, title, detail)) in columns.iter_mut().zip([
                 (
                     "01",
-                    "Connect a model",
-                    "Choose a local runtime or an existing loopback endpoint.",
+                    "Choose your model",
+                    "Select local model files and a GPU-capable runtime or loopback endpoint.",
                 ),
                 (
                     "02",
-                    "Prepare the sandbox",
-                    "One-time setup. Repository tests never run on your host.",
+                    "Queue unattended issues",
+                    "GPUFold finds open, unassigned issues and processes them in order.",
                 ),
                 (
                     "03",
-                    "Review before publishing",
-                    "Every proposed edit and publication needs your approval.",
+                    "Review every repair",
+                    "Proposals are not applied or published until you review them.",
                 ),
             ]) {
                 egui::Frame::group(column.style())
@@ -387,11 +474,304 @@ impl App {
             }
         }
     }
+    fn queue_page(&mut self, ui: &mut egui::Ui) {
+        ui.heading("GPUFold queue results");
+        ui.label("Each ticket has its own saved run. Review the model proposal, approve its plan, apply it locally, and verify it in the sandbox.");
+        if ui.button("Scan another repository or batch").clicked() {
+            self.page = Page::Task;
+        }
+        if self.queue_results.is_empty() {
+            ui.separator();
+            ui.label("No queue results yet. Scan a repository and select open, unassigned tickets.");
+            return;
+        }
+        let snapshot = self.queue_results.clone();
+        ui.separator();
+        for item in snapshot {
+            egui::Frame::group(ui.style())
+                .inner_margin(egui::Margin::same(12.0))
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.hyperlink_to(
+                            format!("#{} · {}", item.ticket.number, item.ticket.title),
+                            &item.ticket.url,
+                        );
+                        if let Some(run) = &item.run {
+                            ui.label(format!("{:?}", run.state));
+            ui.small(format!(
+                "source {}",
+                run.commit.get(..7).unwrap_or(&run.commit)
+            ));
+                            if run.proposal.is_some() {
+                                ui.label("proposal ready");
+                            }
+                            let label = if run.proposal.is_some() {
+                                "Review proposal"
+                            } else {
+                                "Open saved run"
+                            };
+                            if ui.button(label).clicked() {
+                                self.run = Some(run.clone());
+                                self.reviewed.clear();
+                                self.confirm_publish = false;
+                                self.page = Page::Review;
+                            }
+                        } else {
+                            ui.weak("No run created");
+                        }
+                    });
+                    if let Some(error) = &item.error {
+                        ui.colored_label(egui::Color32::YELLOW, error);
+                    }
+                });
+            ui.add_space(6.0);
+        }
+    }
     fn task_page(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Investigate a Rust repository");
-        ui.label("Use a public GitHub repository. The app pins its current commit before it reads source.");
+        ui.heading("GPUFold · Repository ticket queue");
+        ui.label("Scan public GitHub issues, then use your selected local model to prepare repair proposals in order.");
         ui.label("Repository URL (https://github.com/owner/repository)");
         ui.add(egui::TextEdit::singleline(&mut self.url).desired_width(f32::INFINITY));
+        ui.horizontal(|ui| {
+            ui.label("Maximum issues to scan");
+            ui.add(egui::DragValue::new(&mut self.ticket_limit).clamp_range(1..=500));
+            ui.label("Unassigned open issues only");
+        });
+        let repository_is_valid = github::parse_repo(&self.url).is_ok();
+        if !self.url.trim().is_empty() && !repository_is_valid {
+            ui.colored_label(
+                egui::Color32::RED,
+                "Enter a URL in the form https://github.com/owner/repository.",
+            );
+        }
+        if ui
+            .add_enabled(
+                repository_is_valid,
+                egui::Button::new("Scan for unattended tickets"),
+            )
+            .clicked()
+        {
+            let url = self.url.clone();
+            let limit = self.ticket_limit;
+            self.tickets.clear();
+            self.tickets_repository = None;
+            self.selected_tickets.clear();
+            self.job(move |_, cancel| {
+                let (owner, repo) = github::parse_repo(&url)?;
+                let tickets = github::tickets(&owner, &repo, limit, true, &cancel)?;
+                Ok(JobResult::Tickets {
+                    owner,
+                    repo,
+                    tickets,
+                })
+            });
+        }
+        let tickets_match_repository =
+            tickets_match_repository(&self.url, self.tickets_repository.as_ref());
+        if !self.tickets.is_empty() && !tickets_match_repository {
+            ui.colored_label(
+                egui::Color32::YELLOW,
+                "The repository URL changed. Scan it again before selecting or processing tickets.",
+            );
+        }
+        if !self.tickets.is_empty() && tickets_match_repository {
+            ui.separator();
+            ui.horizontal_wrapped(|ui| {
+                ui.label(format!(
+                    "{} open, unassigned issue(s) found. Pull requests are excluded.",
+                    self.tickets.len()
+                ));
+                ui.checkbox(&mut self.skip_seen_tickets, "Skip issues already in GPUFold history");
+            });
+            let seen = self
+                .engine
+                .store
+                .list()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|r| {
+                    github::parse_repo(&self.url).is_ok_and(|(owner, repo)| {
+                        r.owner.eq_ignore_ascii_case(&owner)
+                            && r.repo.eq_ignore_ascii_case(&repo)
+                    })
+                })
+                .filter_map(|r| r.issue_number)
+                .collect::<BTreeSet<_>>();
+            let selectable = self
+                .tickets
+                .iter()
+                .filter(|ticket| !self.skip_seen_tickets || !seen.contains(&ticket.number))
+                .map(|ticket| ticket.number)
+                .collect::<Vec<_>>();
+            let selected_count = selectable
+                .iter()
+                .filter(|number| self.selected_tickets.contains(*number))
+                .count();
+            ui.horizontal(|ui| {
+                if ui.button("Select first 10 new tickets").clicked() {
+                    self.selected_tickets = selectable.iter().take(10).copied().collect();
+                }
+                if ui.button("Clear selection").clicked() {
+                    self.selected_tickets.clear();
+                }
+                ui.label(format!("{selected_count} selected"));
+            });
+            for ticket in &self.tickets {
+                ui.horizontal_wrapped(|ui| {
+                    let was_seen = seen.contains(&ticket.number);
+                    let can_select = !self.skip_seen_tickets || !was_seen;
+                    let mut selected = self.selected_tickets.contains(&ticket.number);
+                    if ui
+                        .add_enabled(can_select, egui::Checkbox::new(&mut selected, ""))
+                        .changed()
+                    {
+                        if selected {
+                            self.selected_tickets.insert(ticket.number);
+                        } else {
+                            self.selected_tickets.remove(&ticket.number);
+                        }
+                    }
+                    ui.hyperlink_to(
+                        format!("#{} · {}", ticket.number, ticket.title),
+                        &ticket.url,
+                    );
+                    ui.small(format!(
+                        "{} comment(s) · updated {}",
+                        ticket.comments, ticket.updated_at
+                    ));
+                    if was_seen {
+                        ui.weak("already in GPUFold history");
+                    }
+                    if !ticket.labels.is_empty() {
+                        ui.weak(ticket.labels.join(" · "));
+                    }
+                });
+            }
+            if selected_count > 10 {
+                ui.colored_label(
+                    egui::Color32::YELLOW,
+                    "Process up to 10 tickets per batch to keep local storage manageable.",
+                );
+            }
+            let queue_is_ready = selected_count > 0
+                && selected_count <= 10
+                && !self.settings.endpoint.trim().is_empty();
+            if ui
+                .add_enabled(
+                    queue_is_ready,
+                    egui::Button::new(format!(
+                        "Generate proposals for {} selected ticket(s)",
+                        selected_count
+                    )),
+                )
+                .clicked()
+            {
+                let url = self.url.clone();
+                let settings = self.settings.clone();
+                let selected = self
+                    .tickets
+                    .iter()
+                    .filter(|ticket| {
+                        self.selected_tickets.contains(&ticket.number)
+                            && selectable.contains(&ticket.number)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                self.queue_results.clear();
+                self.progress_job(move |engine, cancel, progress| {
+                    let _ = progress.send("Checking the configured local model".into());
+                    repair_core::model::health(&settings)
+                        .context("Connect and check your selected local model before processing tickets")?;
+                    let _ = progress.send("Pinning the repository snapshot for this queue".into());
+                    let (owner, repo) = github::parse_repo(&url)?;
+                    let metadata = github::public_repo(&owner, &repo)?;
+                    let base = metadata["default_branch"]
+                        .as_str()
+                        .context("Repository has no default branch")?;
+                    let pinned_commit = github::pinned(&owner, &repo, base)?;
+                    let mut results = Vec::with_capacity(selected.len());
+                    for (index, ticket) in selected.iter().enumerate() {
+                        if let Err(error) = process::check(&cancel) {
+                            results.push(QueueItemResult {
+                                ticket: ticket.clone(),
+                                run: None,
+                                error: Some(error.to_string()),
+                            });
+                            break;
+                        }
+                        let _ = progress.send(format!(
+                            "Ticket {}/{} · preparing #{} {}",
+                            index + 1,
+                            selected.len(),
+                            ticket.number,
+                            ticket.title
+                        ));
+                        match engine.create_queued_issue(
+                            &url,
+                            ticket.number,
+                            &pinned_commit,
+                            &cancel,
+                        ) {
+                            Err(error) => results.push(QueueItemResult {
+                                ticket: ticket.clone(),
+                                run: None,
+                                error: Some(format!("Could not prepare ticket: {error:#}")),
+                            }),
+                            Ok(mut run) => {
+                                if let Err(error) = github::require_unassigned(
+                                    &run.owner,
+                                    &run.repo,
+                                    ticket.number,
+                                ) {
+                                    run.notes.push(format!("Queue skipped ticket: {error}"));
+                                    engine.transition(&mut run, State::Cancelled)?;
+                                    results.push(QueueItemResult {
+                                        ticket: ticket.clone(),
+                                        run: Some(run),
+                                        error: Some(error.to_string()),
+                                    });
+                                    continue;
+                                }
+                                let _ = progress.send(format!(
+                                    "Ticket {}/{} · running the local model for #{}",
+                                    index + 1,
+                                    selected.len(),
+                                    ticket.number
+                                ));
+                                match engine.analyze(&mut run, &settings, &cancel) {
+                                    Ok(()) => results.push(QueueItemResult {
+                                        ticket: ticket.clone(),
+                                        run: Some(run),
+                                        error: None,
+                                    }),
+                                    Err(error) => {
+                                        results.push(QueueItemResult {
+                                            ticket: ticket.clone(),
+                                            run: Some(run),
+                                            error: Some(format!("Model analysis stopped: {error:#}")),
+                                        });
+                                        for remaining in selected.iter().skip(index + 1) {
+                                            results.push(QueueItemResult {
+                                                ticket: remaining.clone(),
+                                                run: None,
+                                                error: Some("Not started because the model analysis stopped.".into()),
+                                            });
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Ok(JobResult::Queue(results))
+                });
+            }
+            ui.small("Tickets are analyzed sequentially. GPUFold does not run repository scripts, apply patches, or publish pull requests during queue processing; review and verify each proposal first.");
+        }
+
+        ui.separator();
+        ui.heading("One-off task or bug sweep");
+        ui.label("The repository commit is pinned before source is read.");
         ui.checkbox(&mut self.sweep, "Bug sweep (findings only; no patches)");
         if !self.sweep {
             ui.horizontal(|ui| {
@@ -405,7 +785,6 @@ impl App {
                 .desired_rows(5)
                 .desired_width(f32::INFINITY),
         );
-        let repository_is_valid = github::parse_repo(&self.url).is_ok();
         let issue_is_valid = self.sweep
             || self.issue.trim().is_empty()
             || self
@@ -414,12 +793,6 @@ impl App {
                 .parse::<u64>()
                 .is_ok_and(|number| number > 0);
         let task_is_valid = !self.task.trim().is_empty();
-        if !self.url.trim().is_empty() && !repository_is_valid {
-            ui.colored_label(
-                egui::Color32::RED,
-                "Enter a URL in the form https://github.com/owner/repository.",
-            );
-        }
         if !self.sweep && !issue_is_valid {
             ui.colored_label(
                 egui::Color32::RED,
@@ -1428,7 +1801,33 @@ impl eframe::App for App {
         }
 
         ctx.request_repaint_after(std::time::Duration::from_millis(150));
-        egui::TopBottomPanel::top("top").show(ctx,|ui|{ui.horizontal(|ui|{ui.heading("Rust Repair");ui.separator();for(label,page)in [("Home",Page::Home),("Task",Page::Task),("Review",Page::Review),("History",Page::History),("Model & settings",Page::Settings),("MCP",Page::Mcp)]{ui.selectable_value(&mut self.page,page,label);}if self.pending.is_some(){ui.spinner();if ui.button("Stop").clicked(){self.cancel.store(true,Ordering::SeqCst);if let Ok(mut r)=self.engine.runtime.lock(){r.unload();}self.message="Stop requested. External model servers may finish already submitted inference.".into();}}});});
+        egui::TopBottomPanel::top("top").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.heading("GPUFold");
+                ui.separator();
+                for (label, page) in [
+                    ("Home", Page::Home),
+                    ("Repository", Page::Task),
+                    ("Queue", Page::Queue),
+                    ("Review", Page::Review),
+                    ("History", Page::History),
+                    ("Model & settings", Page::Settings),
+                    ("MCP", Page::Mcp),
+                ] {
+                    ui.selectable_value(&mut self.page, page, label);
+                }
+                if self.pending.is_some() {
+                    ui.spinner();
+                    if ui.button("Stop").clicked() {
+                        self.cancel.store(true, Ordering::SeqCst);
+                        if let Ok(mut runtime) = self.engine.runtime.lock() {
+                            runtime.unload();
+                        }
+                        self.message = "Stop requested. An already submitted local inference may finish shortly.".into();
+                    }
+                }
+            });
+        });
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.add(egui::Label::new(&self.message).selectable(true));
             if self.pending.is_some() {
@@ -1455,6 +1854,7 @@ impl eframe::App for App {
                 ui.add_enabled_ui(self.pending.is_none(), |ui| match self.page {
                     Page::Home => self.home_page(ui),
                     Page::Task => self.task_page(ui),
+                    Page::Queue => self.queue_page(ui),
                     Page::Review => self.review_page(ui),
                     Page::Settings => self.settings_page(ui),
                     Page::Mcp => self.mcp_page(ui),
@@ -1484,6 +1884,15 @@ fn runtime_approval_key(settings: &Settings) -> String {
     ))
     .unwrap_or_default();
     repair_core::validation::digest(&command)
+}
+
+fn tickets_match_repository(url: &str, scanned: Option<&(String, String)>) -> bool {
+    let Some((owner, repo)) = github::parse_repo(url).ok() else {
+        return false;
+    };
+    scanned.is_some_and(|(ticket_owner, ticket_repo)| {
+        owner.eq_ignore_ascii_case(ticket_owner) && repo.eq_ignore_ascii_case(ticket_repo)
+    })
 }
 
 fn sandbox_script() -> Option<PathBuf> {
@@ -1516,7 +1925,7 @@ fn main() -> eframe::Result<()> {
     });
     let engine = Engine::new(store);
     eframe::run_native(
-        "Rust Repair",
+        "GPUFold",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_inner_size([1100.0, 800.0])
@@ -1555,7 +1964,10 @@ fn main() -> eframe::Result<()> {
 
 #[cfg(test)]
 mod ui_tests {
-    use super::{mcp_config_is_current, runtime_approval_key, sandbox_script};
+    use super::{
+        mcp_config_is_current, runtime_approval_key, sandbox_script,
+        tickets_match_repository,
+    };
     use repair_core::types::Settings;
 
     #[test]
@@ -1591,6 +2003,20 @@ mod ui_tests {
     #[test]
     fn sandbox_setup_script_is_available_for_a_source_checkout() {
         assert!(sandbox_script().is_some());
+    }
+
+    #[test]
+    fn tickets_are_bound_to_the_repository_that_was_scanned() {
+        let scanned = ("example".to_owned(), "project".to_owned());
+        assert!(tickets_match_repository(
+            "https://github.com/Example/Project",
+            Some(&scanned)
+        ));
+        assert!(!tickets_match_repository(
+            "https://github.com/other/project",
+            Some(&scanned)
+        ));
+        assert!(!tickets_match_repository("invalid", Some(&scanned)));
     }
 
     #[test]

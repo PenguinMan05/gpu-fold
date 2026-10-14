@@ -8,7 +8,7 @@ use std::time::Duration;
 
 pub fn client() -> Result<Client> {
     Ok(Client::builder()
-        .user_agent("Local-Rust-Repair/0.1.0")
+        .user_agent("GPUFold/0.1.0")
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(30))
         .build()?)
@@ -102,6 +102,120 @@ pub fn related(owner: &str, repo: &str) -> Result<Vec<(String, String)>> {
         })
         .collect())
 }
+
+/// A public, open GitHub issue that can be reviewed for local repair work.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ticket {
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    pub assignees: Vec<String>,
+    pub labels: Vec<String>,
+    pub comments: u64,
+    pub updated_at: String,
+}
+
+fn ticket_from_value(value: &Value, unassigned_only: bool) -> Option<Ticket> {
+    if value["state"].as_str() != Some("open") || value.get("pull_request").is_some() {
+        return None;
+    }
+    let assignees = value["assignees"]
+        .as_array()?
+        .iter()
+        .filter_map(|a| a["login"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    if unassigned_only && !assignees.is_empty() {
+        return None;
+    }
+    Some(Ticket {
+        number: value["number"].as_u64()?,
+        title: value["title"].as_str()?.to_owned(),
+        url: value["html_url"].as_str()?.to_owned(),
+        assignees,
+        labels: value["labels"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|l| l["name"].as_str().map(str::to_owned))
+            .collect(),
+        comments: value["comments"].as_u64().unwrap_or_default(),
+        updated_at: value["updated_at"].as_str().unwrap_or_default().to_owned(),
+    })
+}
+
+/// Lists oldest-first open issues. Pull requests are always excluded. When
+/// `unassigned_only` is true, assigned issues are excluded as attended work.
+pub fn tickets(
+    owner: &str,
+    repo: &str,
+    limit: usize,
+    unassigned_only: bool,
+    cancel: &process::Cancel,
+) -> Result<Vec<Ticket>> {
+    ensure!((1..=500).contains(&limit), "Ticket scan limit must be 1–500");
+    process::check(cancel)?;
+    parse_repo(&format!("https://github.com/{owner}/{repo}"))?;
+    let _metadata = public_repo(owner, repo)?;
+    let http = client()?;
+    let mut found = Vec::with_capacity(limit.min(100));
+    let page_count = limit.div_ceil(50);
+    let mut scanned = 0usize;
+    for page in 1..=page_count {
+        process::check(cancel)?;
+        let params = [
+            ("state", "open".to_owned()),
+            ("per_page", "50".to_owned()),
+            ("sort", "created".to_owned()),
+            ("direction", "asc".to_owned()),
+            ("page", page.to_string()),
+        ];
+        let value = response(
+            http.get(format!("https://api.github.com/repos/{owner}/{repo}/issues"))
+                .query(&params)
+                .send()?,
+        )?;
+        let issues = value.as_array().context("Invalid issue list response")?;
+        let page_len = issues.len();
+        for issue in issues.iter().take((limit - scanned).min(50)) {
+            scanned += 1;
+            if let Some(ticket) = ticket_from_value(issue, unassigned_only) {
+                found.push(ticket);
+                if found.len() == limit {
+                    return Ok(found);
+                }
+            }
+        }
+        if scanned >= limit || page_len < 50 {
+            break;
+        }
+    }
+    Ok(found)
+}
+
+/// Re-check queue eligibility immediately before creating a local run.
+pub fn require_unassigned(owner: &str, repo: &str, number: u64) -> Result<()> {
+    ensure!(number > 0, "Ticket number must be positive");
+    parse_repo(&format!("https://github.com/{owner}/{repo}"))?;
+    let issue = response(
+        client()?
+            .get(format!(
+                "https://api.github.com/repos/{owner}/{repo}/issues/{number}"
+            ))
+            .send()?,
+    )?;
+    ensure!(
+        issue["state"].as_str() == Some("open") && issue.get("pull_request").is_none(),
+        "Ticket is no longer an open issue"
+    );
+    ensure!(
+        issue["assignees"]
+            .as_array()
+            .is_some_and(|assignees| assignees.is_empty()),
+        "Ticket has been assigned since the queue was scanned; it was skipped"
+    );
+    Ok(())
+}
+
 pub fn issue(owner: &str, repo: &str, number: u64) -> Result<String> {
     let v = response(
         client()?
@@ -282,6 +396,53 @@ pub fn check_publish(run: &Run, a: &PublishApproval) -> Result<()> {
         run.proposal.as_ref().context("Missing proposal")?,
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod ticket_tests {
+    use super::ticket_from_value;
+    use serde_json::json;
+
+    fn issue(state: &str, assigned: bool, pull_request: bool) -> serde_json::Value {
+        let mut value = json!({
+            "number": 17,
+            "title": "Crash when input is empty",
+            "html_url": "https://github.com/example/project/issues/17",
+            "state": state,
+            "assignees": if assigned { json!([{"login":"maintainer"}]) } else { json!([]) },
+            "labels": [{"name":"bug"}],
+            "comments": 2,
+            "updated_at": "2026-10-14T12:00:00Z"
+        });
+        if pull_request {
+            value["pull_request"] = json!({"url":"https://api.github.com/repos/example/project/pulls/17"});
+        }
+        value
+    }
+
+    #[test]
+    fn ticket_scan_excludes_closed_items_and_pull_requests() {
+        assert!(ticket_from_value(&issue("closed", false, false), false).is_none());
+        assert!(ticket_from_value(&issue("open", false, true), false).is_none());
+    }
+
+    #[test]
+    fn unassigned_filter_keeps_only_open_unassigned_issues() {
+        assert!(ticket_from_value(&issue("open", true, false), true).is_none());
+        let ticket = ticket_from_value(&issue("open", false, false), true).unwrap();
+        assert_eq!(ticket.number, 17);
+        assert_eq!(ticket.labels, vec!["bug".to_owned()]);
+        assert_eq!(ticket.comments, 2);
+        assert!(ticket.assignees.is_empty());
+        assert!(ticket_from_value(&issue("open", true, false), false).is_some());
+    }
+
+    #[test]
+    fn ticket_scan_limit_is_bounded_before_network_access() {
+        let cancel = crate::process::cancel_token();
+        assert!(super::tickets("example", "project", 0, true, &cancel).is_err());
+        assert!(super::tickets("example", "project", 501, true, &cancel).is_err());
+    }
 }
 pub fn publish(
     run: &Run,

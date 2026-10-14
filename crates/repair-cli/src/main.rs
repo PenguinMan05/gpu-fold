@@ -5,9 +5,9 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
-    name = "rust-repair",
+    name = "gpufold",
     version,
-    about = "Local Rust repository repair. Every execution and publication requires explicit consent."
+    about = "GPUFold local GitHub issue repair tools. Every execution and publication requires explicit consent."
 )]
 struct Args {
     #[arg(long)]

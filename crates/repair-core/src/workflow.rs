@@ -56,6 +56,23 @@ impl Engine {
         self.store.save(&r)?;
         Ok(r)
     }
+    pub fn create_queued_issue(
+        &self,
+        url: &str,
+        issue: u64,
+        pinned_commit: &str,
+        cancel: &process::Cancel,
+    ) -> Result<Run> {
+        let r = repository::create_queued_issue(
+            &self.store.root,
+            url,
+            issue,
+            pinned_commit,
+            cancel,
+        )?;
+        self.store.save(&r)?;
+        Ok(r)
+    }
     pub fn fixture(&self) -> Result<Run> {
         let id = format!(
             "fixture{}",

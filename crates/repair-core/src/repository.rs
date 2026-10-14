@@ -97,8 +97,43 @@ pub fn create(
     issue: Option<u64>,
     cancel: &process::Cancel,
 ) -> Result<Run> {
+    create_inner(root, url, task, mode, issue, None, false, cancel)
+}
+
+pub fn create_queued_issue(
+    root: &Path,
+    url: &str,
+    issue: u64,
+    pinned_commit: &str,
+    cancel: &process::Cancel,
+) -> Result<Run> {
+    create_inner(
+        root,
+        url,
+        &format!("Fix unattended GitHub issue #{issue}"),
+        Mode::Issue,
+        Some(issue),
+        Some(pinned_commit),
+        true,
+        cancel,
+    )
+}
+
+fn create_inner(
+    root: &Path,
+    url: &str,
+    task: &str,
+    mode: Mode,
+    issue: Option<u64>,
+    pinned_commit: Option<&str>,
+    require_unassigned: bool,
+    cancel: &process::Cancel,
+) -> Result<Run> {
     ensure!(task.len() <= 20000, "Task too long");
     let (owner, repo) = github::parse_repo(url)?;
+    if require_unassigned {
+        github::require_unassigned(&owner, &repo, issue.context("Queue requires an issue")?)?;
+    }
     let meta = github::public_repo(&owner, &repo)?;
     ensure!(
         meta["size"].as_u64().unwrap_or(u64::MAX) <= 500_000,
@@ -108,7 +143,15 @@ pub fn create(
         .as_str()
         .context("No default branch")?
         .to_owned();
-    let commit = github::pinned(&owner, &repo, &base)?;
+    let commit = if let Some(commit) = pinned_commit {
+        ensure!(
+            commit.len() == 40 && commit.chars().all(|c| c.is_ascii_hexdigit()),
+            "Invalid pinned commit SHA"
+        );
+        commit.to_owned()
+    } else {
+        github::pinned(&owner, &repo, &base)?
+    };
     let id = format!(
         "r{}",
         std::time::SystemTime::now()
@@ -194,6 +237,9 @@ pub fn create(
             .push(format!("Duplicate API check unavailable: {e}")),
     }
     let task = if let Some(n) = issue {
+        if require_unassigned {
+            github::require_unassigned(&owner, &repo, n)?;
+        }
         github::issue(&owner, &repo, n)?
     } else {
         process::scrub(task)

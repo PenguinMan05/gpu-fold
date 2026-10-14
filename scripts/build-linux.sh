@@ -31,13 +31,13 @@
     cat > "$app_desktop/rust-repair.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
-Name=Rust Repair
-Comment=Review, test, and propose Rust repository fixes using local AI
+Name=GPUFold
+Comment=Queue and review local-model repairs for GitHub issues
 Exec="$desktop_exe"
 Icon=applications-development
 Terminal=false
 Categories=Development;
 DESKTOP
-    echo "SUCCESS: installed Rust Repair to your application menu"
+    echo "SUCCESS: installed GPUFold to your application menu"
   fi
 )

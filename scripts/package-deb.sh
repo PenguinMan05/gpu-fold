@@ -18,15 +18,15 @@
 Package: rust-repair
 Version: 0.1.0
 Architecture: amd64
-Maintainer: Rust Repair contributors
+Maintainer: GPUFold contributors
 Depends: libc6 (>= ${glibc_min}), libgcc-s1, libx11-6, libxkbcommon0, libxkbcommon-x11-0, libgl1, libwayland-client0, libdbus-1-3, git, podman
-Description: Local AI-assisted Rust repository repair desktop app
- Requires a separately installed local inference server and a built sandbox image.
+Description: Local-model GitHub issue queue and Rust repair desktop app
+ Requires a separately installed local inference runtime and a built sandbox image.
 CONTROL
   cat > "$package_dir/usr/share/applications/rust-repair.desktop" <<'DESKTOP'
 [Desktop Entry]
 Type=Application
-Name=Rust Repair
+Name=GPUFold
 Exec=/usr/bin/rust-repair-desktop
 Icon=applications-development
 Terminal=false
