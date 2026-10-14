@@ -1289,7 +1289,7 @@ impl App {
     }
     fn settings_page(&mut self, ui: &mut egui::Ui) {
         ui.heading("Local model and GPU");
-        ui.label("Connect to an existing local model, or explicitly start your installed mistralrs runtime with a complete local model folder. Model downloads are never automatic.");
+        ui.label("Connect to an existing local model, or explicitly start your installed mistralrs runtime with a complete model folder or GGUF file. Model downloads are never automatic.");
         ui.label("Installed mistralrs executable");
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.settings.runtime_path);
@@ -1299,11 +1299,19 @@ impl App {
                 }
             }
         });
-        ui.label("Complete local model folder");
+        ui.label("Local model directory or GGUF file");
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.settings.model_path);
-            if ui.button("Browse model folder").clicked() {
+            if ui.button("Browse folder").clicked() {
                 if let Some(p) = rfd::FileDialog::new().pick_folder() {
+                    self.settings.model_path = p.display().to_string();
+                }
+            }
+            if ui.button("Browse GGUF file").clicked() {
+                if let Some(p) = rfd::FileDialog::new()
+                    .add_filter("GGUF model", &["gguf"])
+                    .pick_file()
+                {
                     self.settings.model_path = p.display().to_string();
                 }
             }

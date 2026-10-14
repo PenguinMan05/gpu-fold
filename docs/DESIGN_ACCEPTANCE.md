@@ -10,7 +10,7 @@ The current Linux application provides a local, single-machine first step for th
 |---|---|
 | Point GPUFold at a public GitHub repository | Repository URL field; anonymous metadata and issue APIs; repository source is pinned to a commit when a run starts. |
 | Find tickets that have not been taken by a maintainer | Paginated open-issue scan, pull requests excluded, unassigned issues shown oldest first; eligibility is checked again before inference. |
-| Use a model file selected by the user | Existing settings select a local runtime/model directory or a loopback-compatible local inference endpoint. The runtime determines whether inference uses GPU or CPU. |
+| Use a model file selected by the user | Existing settings select a local runtime/model directory or GGUF file, or a loopback-compatible local inference endpoint. The runtime determines whether inference uses GPU or CPU. |
 | Work through tickets | User selects up to 10 tickets; the app processes them sequentially, persists one run per issue, and shows per-ticket outcomes. |
 | Produce a fix | The model proposes bounded Rust edits and a regression test. Source paths and replacements are validated before any patch can be applied. |
 | Protect the repository and user | Queue inference does not execute repository code. A human reviews a plan and changed files, explicitly approves sandbox execution, and decides whether to publish a draft PR. |

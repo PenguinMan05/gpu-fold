@@ -12,7 +12,7 @@ GPUFold is now centered on its ticket-queue use case: scan a public repository, 
 
 ## Supported today
 
-- One Linux machine, one public GitHub repository at a time, and a model/runtime configured locally.
+- One Linux machine, one public GitHub repository at a time, and a local model directory/GGUF file or loopback model endpoint.
 - Rust Cargo repositories with a committed `Cargo.lock` and crates.io dependencies. The current parser, patch validator, and test sandbox are Rust-specific.
 - Human review for source changes, sandbox execution approval, and draft publication. GPUFold does not merge or push changes to the upstream repository.
 

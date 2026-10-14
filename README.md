@@ -14,7 +14,7 @@ bash scripts/build-linux.sh --install
 
 The desktop app appears as **GPUFold**. The existing command-line binary is `rust-repair` for compatibility.
 
-1. In **Model & settings**, choose your local model directory and installed inference runtime, or enter an existing local OpenAI-compatible endpoint. Choose a GPU-capable runtime for GPU inference; CPU mode is available where needed. GPUFold does not silently download model weights.
+1. In **Model & settings**, choose your local model directory or GGUF file and installed inference runtime, or enter an existing local OpenAI-compatible endpoint. Choose a GPU-capable runtime for GPU inference; CPU mode is available where needed. GPUFold does not silently download model weights.
 2. Prepare the rootless Podman sandbox from **Home → Prepare test sandbox**, or run `bash scripts/build-sandbox.sh --approve-image-download` in a terminal. The base image is downloaded only after that explicit approval.
 3. In **Repository**, enter a public GitHub URL and select **Scan for unattended tickets**. GPUFold considers open issues with no assignees unattended; pull requests are excluded. Issue discovery does not require a GitHub token.
 4. Select up to 10 tickets and choose **Generate proposals**. GPUFold rechecks that each issue is still open and unassigned, pins the repository commit, then sends bounded public source context to your configured local model.
