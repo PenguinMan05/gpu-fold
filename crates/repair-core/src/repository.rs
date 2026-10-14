@@ -238,9 +238,10 @@ fn create_inner(
     }
     let task = if let Some(n) = issue {
         if require_unassigned {
-            github::require_unassigned(&owner, &repo, n)?;
+            github::unassigned_issue(&owner, &repo, n)?
+        } else {
+            github::issue(&owner, &repo, n)?
         }
-        github::issue(&owner, &repo, n)?
     } else {
         process::scrub(task)
     };

@@ -718,20 +718,6 @@ impl App {
                                 error: Some(format!("Could not prepare ticket: {error:#}")),
                             }),
                             Ok(mut run) => {
-                                if let Err(error) = github::require_unassigned(
-                                    &run.owner,
-                                    &run.repo,
-                                    ticket.number,
-                                ) {
-                                    run.notes.push(format!("Queue skipped ticket: {error}"));
-                                    engine.transition(&mut run, State::Cancelled)?;
-                                    results.push(QueueItemResult {
-                                        ticket: ticket.clone(),
-                                        run: Some(run),
-                                        error: Some(error.to_string()),
-                                    });
-                                    continue;
-                                }
                                 let _ = progress.send(format!(
                                     "Ticket {}/{} · running the local model for #{}",
                                     index + 1,

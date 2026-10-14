@@ -216,6 +216,34 @@ pub fn require_unassigned(owner: &str, repo: &str, number: u64) -> Result<()> {
     Ok(())
 }
 
+/// Fetches the current issue text while verifying it is still queue-eligible.
+pub fn unassigned_issue(owner: &str, repo: &str, number: u64) -> Result<String> {
+    let issue = response(
+        client()?
+            .get(format!(
+                "https://api.github.com/repos/{owner}/{repo}/issues/{number}"
+            ))
+            .send()?,
+    )?;
+    ensure!(
+        issue["state"].as_str() == Some("open") && issue.get("pull_request").is_none(),
+        "Ticket is no longer an open issue"
+    );
+    ensure!(
+        issue["assignees"]
+            .as_array()
+            .is_some_and(|assignees| assignees.is_empty()),
+        "Ticket has been assigned since the queue was scanned; it was skipped"
+    );
+    let text = format!(
+        "Issue #{number}: {}\n{}",
+        issue["title"].as_str().unwrap_or(""),
+        issue["body"].as_str().unwrap_or("")
+    );
+    ensure!(text.len() <= 20000, "Issue too long");
+    Ok(process::scrub(&text))
+}
+
 pub fn issue(owner: &str, repo: &str, number: u64) -> Result<String> {
     let v = response(
         client()?
