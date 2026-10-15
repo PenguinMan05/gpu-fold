@@ -10,8 +10,8 @@ The current Linux application provides a local, single-machine first step for th
 |---|---|
 | Point GPUFold at a public GitHub repository | Repository URL field; anonymous metadata and issue APIs; repository source is pinned to a commit when a run starts. |
 | Find tickets that have not been taken by a maintainer | Paginated open-issue scan, pull requests excluded, unassigned issues shown oldest first; eligibility is checked again before inference. |
-| Use a model file selected by the user | Existing settings select a local runtime/model directory or GGUF file, or a loopback-compatible local inference endpoint. The runtime determines whether inference uses GPU or CPU. |
-| Work through tickets | User selects up to 10 tickets; the app processes them sequentially, persists one run per issue, and shows per-ticket outcomes. |
+| Use a model file selected by the user | Select a GGUF file using the bundled Vulkan/CPU engine, or use an optional loopback-compatible inference endpoint. The runtime determines whether inference uses GPU or CPU. |
+| Work through tickets | User selects up to 10 tickets; the app gives each ticket a turn, retries unresolved attempts with feedback, persists one run per issue, and shows live activity and per-ticket outcomes. |
 | Produce a fix | The model proposes bounded Rust edits and a regression test. Source paths and replacements are validated before any patch can be applied. |
 | Protect the repository and user | Queue inference does not execute repository code. A human reviews a plan and changed files, explicitly approves sandbox execution, and decides whether to publish a draft PR. |
 
@@ -33,7 +33,7 @@ The current Linux application provides a local, single-machine first step for th
 ## Existing safety and quality gates
 
 - Public, non-archived repositories only. The current repair engine requires Rust Cargo metadata and a committed lockfile.
-- Model context is bounded and sent only to the configured local provider. Runtime and model files are user-selected; they are not downloaded by GPUFold.
+- Model context is bounded and sent only to the configured local provider. Model weights are user-selected and never downloaded by GPUFold. A verified inference engine is included in the installer. Applicable project AI conventions are included as bounded, scoped guidance.
 - The Rust patch validator requires exact source citations and bounded unique replacements, protects existing tests, and checks the proposed reproduction test against the pristine source.
 - Test execution uses rootless Podman, pinned image identity, offline vendored dependencies, no network or host credentials, read-only source, and a bounded writable copy.
 - Draft-PR publication requires level-3 evidence, per-file review, repository contribution checks, explicit consent, and a fork destination. GPUFold does not merge or push to upstream.

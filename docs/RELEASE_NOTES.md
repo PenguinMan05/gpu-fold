@@ -1,19 +1,18 @@
-## GGUF setup now needs only your model file
+## GPUFold 0.4.0 — persistent analysis and live activity
 
-- The installer includes a pinned llama.cpp inference engine, its shared libraries, Vulkan GPU backend, and CPU support.
-- Choose **Local GGUF file → Choose GGUF file → Load model**. No engine executable, external app, server startup, or port configuration is required.
-- GPUFold selects a free loopback port, starts the included engine, waits for the model to become ready, and releases it when stopped or the app closes.
-- Existing file-based configurations switch to the included engine. LM Studio and Ollama remain optional alternatives.
-- Model weights remain local and user supplied. The app never downloads model weights or executables at runtime.
+- Fix missing proposal fields by supplying an actual JSON schema to the included engine, including the required explanation field. Optional external providers use schema mode when supported and fall back to plain JSON mode.
+- Automatically retry malformed JSON, invalid citations, unsupported repair attempts, and interrupted/truncated generation with corrective feedback. Remove the three-attempt cutoff. Failed queue attempts rotate behind other tickets, so one difficult issue does not block all other selected work.
+- Show a visible live activity panel below the status message: source scope, applicable instruction files, generation, validation, errors, retries, and the model’s brief explanation. Stop is available in the activity panel.
+- Use the bundled model tokenizer automatically. Fit source and issue excerpts into the input window, and rebalance input/output within the loaded model window when output is truncated. No tokenizer.json is required for GGUF use.
+- Include scoped AGENTS.md, skills.md / SKILL.md, CLAUDE.md, GEMINI.md, Copilot instruction files, and editor rules in model context. Project guidance cannot bypass execution, credential, or review controls.
+- Bound retained prompts/outputs and activity while preserving the total attempt count and saved state. Existing run histories remain readable.
 
-## Install / upgrade
+## Installation
 
-Install the `.deb` on x86-64 Ubuntu 24.04 / Linux Mint 22 generation systems (glibc 2.39+). Open **GPUFold** from the application menu. The package installer resolves its normal system library dependencies. GPU acceleration needs a working Vulkan-capable GPU driver; CPU mode works without a GPU driver or CUDA toolkit.
+Install the uniquely named .deb on x86-64 Ubuntu 24.04 / Linux Mint 22 generation systems (glibc 2.39+). Open GPUFold, select the GGUF, and click Load model. The pinned llama.cpp Vulkan/CPU engine remains included. Your normal compatible GPU driver is needed for GPU acceleration.
 
-The included engine is the official llama.cpp b11627 Ubuntu x64 Vulkan build, pinned by SHA-256, from source commit 8c2134a8755d8a9792af513dab20282affe903e4. Upstream license and provenance are included in the package. Its source is https://github.com/ggml-org/llama.cpp/tree/8c2134a8755d8a9792af513dab20282affe903e4.
+## Verification and limits
 
-## Verification and scope
+Regression checks cover repeated missing-explanation responses beyond three attempts, feedback-driven citation repair, unresolved queue turns, cancellation during retry waits, oversized issue/source fitting, scoped project instructions, bounded activity, and older history records. The real GGUF test checks tokenization and schema-constrained chat output as well as loading, generation, and unloading, before and after package installation. Desktop launch, isolated fail-before/pass-after repair tests, and package installation must pass before publication.
 
-CI verifies the bundled engine's checksum and dependencies, loads a pinned tiny real GGUF, generates real tokens, unloads it, exercises the desktop Load model worker with only a model path, and repeats real inference using the installed package's engine. Workspace tests, isolated repair fixtures, desktop navigation/screenshots, and package installation must also pass before release publication.
-
-The tiny GGUF test verifies loading and inference plumbing, not coding quality. CI does not have a physical GPU; Vulkan GPU performance and compatibility require testing on your hardware. This release's repair engine still targets Rust / Cargo projects with Cargo.lock and crates.io dependencies. The peer-to-peer volunteer GPU network is not implemented.
+The tiny model verifies the inference interface, not real-world coding quality. CI has no physical GPU. A local model cannot be guaranteed to solve every issue; unresolved analysis retries until stopped. Applying code, running project tests, and publishing still require review. This build supports Rust/Cargo repositories with Cargo.lock; the peer-to-peer GPU network remains unimplemented.

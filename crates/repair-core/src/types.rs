@@ -130,7 +130,7 @@ pub struct Run {
     pub model_hash: String,
     pub prompts: Vec<String>,
     pub model_outputs: Vec<String>,
-    pub attempts: u8,
+    pub attempts: u64,
     pub context_paths: Vec<String>,
     pub notes: Vec<String>,
     pub pr_url: Option<String>,

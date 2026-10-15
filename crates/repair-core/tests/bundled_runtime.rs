@@ -36,7 +36,7 @@ fn included_engine_loads_a_real_gguf_generates_tokens_and_unloads() {
     selected.model_path = model_path;
     selected.cpu = true;
     selected.context_tokens = 128;
-    selected.max_output_tokens = 64;
+    selected.max_output_tokens = 512;
     assert!(selected.runtime_path.is_empty());
     let settings = runtime::local_gguf_settings(&selected).unwrap();
     if std::env::var_os("GPUFOLD_TEST_INSTALLED").is_some() {
@@ -57,6 +57,23 @@ fn included_engine_loads_a_real_gguf_generates_tokens_and_unloads() {
     let result: serde_json::Value = http.post(url).json(&serde_json::json!({"prompt":"Once upon a time","n_predict":8,"temperature":0,"seed":42})).send().unwrap().error_for_status().unwrap().json().unwrap();
     assert!(!result["content"].as_str().unwrap_or_default().is_empty(), "no model text: {result}");
     assert!(result["tokens_predicted"].as_u64().or_else(|| result["timings"]["predicted_n"].as_u64()).unwrap_or(0) > 0, "no generated tokens: {result}");
+    let (count, exact) = model::token_count(&settings, "A real model tokenizer counts this sentence.").unwrap();
+    assert!(exact && count > 0, "the included engine must supply its own tokenizer");
+    let expected = serde_json::json!({"explanation":"Schema test","citations":[],"planned_files":[],"edits":[],"reproduction":null,"no_fix":true,"tool_requests":[]});
+    let mut schema = model::proposal_schema();
+    for (key,value) in expected.as_object().unwrap() {
+        schema["properties"][key] = serde_json::json!({"const":value});
+    }
+    let constrained: serde_json::Value = http.post(&settings.endpoint).json(&serde_json::json!({
+        "model":"GPUFold-local","messages":[{"role":"user","content":"Return the JSON object required by the grammar."}],
+        "max_tokens":512,"temperature":0,"stream":false,
+        "response_format":{"type":"json_object","schema":schema}
+    })).send().unwrap().error_for_status().unwrap().json().unwrap();
+    let content = constrained["choices"][0]["message"]["content"].as_str().expect("chat content");
+    let parsed = model::parse_proposal(content).unwrap();
+    assert_eq!(parsed.explanation,"Schema test");
+    assert!(parsed.no_fix);
+    println!("PASS: bundled tokenizer and actual schema-constrained chat completion include all proposal fields.");
     let port = model::local_url(&settings.endpoint).unwrap().port().unwrap();
     engine.unload();
     assert!(!engine.running());

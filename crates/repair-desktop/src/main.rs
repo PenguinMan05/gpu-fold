@@ -198,6 +198,7 @@ impl App {
         if self.pending.is_some() {
             return;
         }
+        self.engine.clear_activity();
         let e = self.engine.clone();
         let token = process::cancel_token();
         self.cancel = token.clone();
@@ -224,6 +225,7 @@ impl App {
         if self.pending.is_some() {
             return;
         }
+        self.engine.clear_activity();
         let engine = self.engine.clone();
         let cancel = process::cancel_token();
         self.cancel = cancel.clone();
@@ -577,72 +579,43 @@ impl App {
                         .context("Repository has no default branch")?;
                     let pinned_commit = github::pinned(&owner, &repo, base)?;
                     let mut results = Vec::with_capacity(selected.len());
-                    for (index, ticket) in selected.iter().enumerate() {
-                        if let Err(error) = process::check(&cancel) {
-                            results.push(QueueItemResult {
-                                ticket: ticket.clone(),
-                                run: None,
-                                error: Some(error.to_string()),
-                            });
+                    let mut waiting = std::collections::VecDeque::from_iter(selected.iter().cloned().map(|ticket| (ticket, None::<Run>)));
+                    let mut turn = 0u64;
+                    while let Some((ticket, saved)) = waiting.pop_front() {
+                        if process::check(&cancel).is_err() {
+                            results.push(QueueItemResult { ticket, run: saved, error: Some("Stopped by you; saved attempts are in History.".into()) });
+                            for (ticket, run) in waiting { results.push(QueueItemResult { ticket, run, error: Some("Stopped by you.".into()) }); }
                             break;
                         }
-                        let _ = progress.send(format!(
-                            "Ticket {}/{} · preparing #{} {}",
-                            index + 1,
-                            selected.len(),
-                            ticket.number,
-                            ticket.title
-                        ));
-                        match engine.create_queued_issue(
-                            &url,
-                            ticket.number,
-                            &pinned_commit,
-                            &cancel,
-                        ) {
-                            Err(error) => results.push(QueueItemResult {
-                                ticket: ticket.clone(),
-                                run: None,
-                                error: Some(format!("Could not prepare ticket: {error:#}")),
-                            }),
-                            Ok(mut run) => {
-                                let _ = progress.send(format!(
-                                    "Ticket {}/{} · running the local model for #{}",
-                                    index + 1,
-                                    selected.len(),
-                                    ticket.number
-                                ));
-                                match engine.analyze(&mut run, &settings, &cancel) {
-                                    Ok(()) => results.push(QueueItemResult {
-                                        ticket: ticket.clone(),
-                                        run: Some(run),
-                                        error: None,
-                                    }),
-                                    Err(error) => {
-                                        results.push(QueueItemResult {
-                                            ticket: ticket.clone(),
-                                            run: Some(run),
-                                            error: Some(format!("Model analysis stopped: {error:#}")),
-                                        });
-                                        for remaining in selected.iter().skip(index + 1) {
-                                            results.push(QueueItemResult {
-                                                ticket: remaining.clone(),
-                                                run: None,
-                                                error: Some("Not started because the model analysis stopped.".into()),
-                                            });
-                                        }
-                                        break;
-                                    }
+                        turn = turn.saturating_add(1);
+                        let label = format!("Queue turn {turn}: working on #{} {}", ticket.number, ticket.title);
+                        let _ = progress.send(label.clone());
+                        engine.report_activity(&label);
+                        let prepared = match saved {
+                            Some(run) => Ok(run),
+                            None => engine.create_queued_issue(&url, ticket.number, &pinned_commit, &cancel),
+                        };
+                        match prepared {
+                            Err(error) => results.push(QueueItemResult { ticket, run: None, error: Some(format!("Could not prepare ticket: {error:#}")) }),
+                            Ok(mut run) => match engine.analyze_once(&mut run, &settings, &cancel) {
+                                Ok(()) => results.push(QueueItemResult { ticket, run: Some(run), error: None }),
+                                Err(error) if error.downcast_ref::<repair_core::model::RetryableProposalError>().is_some() && process::check(&cancel).is_ok() => {
+                                    let _ = progress.send(format!("#{} needs another attempt; {} ticket(s) still active", ticket.number, waiting.len()+1));
+                                    waiting.push_back((ticket, Some(run)));
+                                    for _ in 0..10 { if process::check(&cancel).is_err() { break; } std::thread::sleep(std::time::Duration::from_millis(100)); }
                                 }
-                            }
+                                Err(error) => results.push(QueueItemResult { ticket, run: Some(run), error: Some(format!("Ticket needs attention: {error:#}")) }),
+                            },
                         }
                     }
+                    results.sort_by_key(|item| selected.iter().position(|ticket| ticket.number == item.ticket.number).unwrap_or(usize::MAX));
                     Ok(JobResult::Queue(results))
                 });
             }
             if !self.model_ready() {
                 ui.label("Connect your model in Setup to enable Start.");
             }
-            ui.small("Tickets are analyzed sequentially. GPUFold does not run repository scripts, apply patches, or publish pull requests during queue processing; review and verify each proposal first.");
+            ui.small("Failed attempts rotate through the queue and retry automatically until a proposal is ready or you stop the task. Tickets are analyzed one at a time. GPUFold does not run repository scripts, apply patches, or publish pull requests during queue processing; review and verify each proposal first.");
             egui::ScrollArea::vertical()
                 .id_salt("issue_list")
                 .max_height(320.0)
@@ -841,8 +814,7 @@ impl App {
                                     | State::NoFix
                                     | State::Cancelled
                                     | State::Review
-                            ) && r.attempts < 3
-                                && self.model_ready(),
+                            ) && self.model_ready(),
                             egui::Button::new("Analyze with my local model"),
                         )
                         .clicked()
@@ -953,9 +925,9 @@ impl App {
                 return;
             }
         }
-        if r.state == State::Review && r.evidence.level < 3 && r.attempts < 3 {
+        if r.state == State::Review && r.evidence.level < 3 {
             if ui
-                .button("Revise with test feedback (bounded retry)")
+                .button("Revise with test feedback")
                 .clicked()
             {
                 let settings = self.settings.clone();
@@ -1685,24 +1657,29 @@ impl eframe::App for App {
                 .show(ui, |ui| {
                     ui.add(egui::Label::new(&self.message).wrap().selectable(true));
                 });
-            if self.pending.is_some() {
-                if let Ok(activity) = self.engine.activity.lock() {
-                    if !activity.is_empty() {
-                        ui.collapsing("Streaming model output (untrusted)", |ui| {
-                            egui::ScrollArea::vertical()
-                                .max_height(120.0)
-                                .show(ui, |ui| {
-                                    ui.add(
-                                        egui::Label::new(
-                                            egui::RichText::new(&*activity).monospace(),
-                                        )
-                                        .selectable(true),
-                                    );
-                                });
-                        });
+            let activity = self.engine.activity.lock().map(|log| log.clone()).unwrap_or_default();
+            if !activity.is_empty() {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if self.pending.is_some() { ui.spinner(); }
+                    ui.strong(if self.pending.is_some() { "Working · live activity" } else { "Last task activity" });
+                    if self.pending.is_some() && ui.button("Stop current task").clicked() {
+                        self.cancel.store(true, Ordering::SeqCst);
+                        self.message = "Stopping… Saved attempts are kept in History.".into();
                     }
+                });
+                egui::ScrollArea::vertical().id_salt("live_activity").max_height(160.0).stick_to_bottom(true).show(ui, |ui| {
+                    ui.add(egui::Label::new(&activity).wrap().selectable(true));
+                });
+                let summary = self.engine.model_output.lock().map(|raw| repair_core::model::proposal_summary(raw)).unwrap_or_default();
+                if !summary.is_empty() {
+                    ui.strong("Model summary");
+                    egui::ScrollArea::vertical().id_salt("live_model_summary").max_height(70.0).stick_to_bottom(true).show(ui, |ui| {
+                        ui.add(egui::Label::new(process::scrub(&summary)).wrap().selectable(true));
+                    });
                 }
             }
+
         });
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical()

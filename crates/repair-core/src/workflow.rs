@@ -20,6 +20,7 @@ pub struct Engine {
     pub store: Store,
     pub runtime: std::sync::Arc<std::sync::Mutex<crate::runtime::ManagedRuntime>>,
     pub activity: std::sync::Arc<std::sync::Mutex<String>>,
+    pub model_output: std::sync::Arc<std::sync::Mutex<String>>,
 }
 impl Engine {
     pub fn new(store: Store) -> Self {
@@ -27,7 +28,23 @@ impl Engine {
             store,
             runtime: Default::default(),
             activity: Default::default(),
+            model_output: Default::default(),
         }
+    }
+    pub fn report_activity(&self, message: &str) {
+        if let Ok(mut log) = self.activity.lock() {
+            log.push_str(&process::scrub(message));
+            log.push('\n');
+            if log.len() > 64000 {
+                let mut start = log.len() - 64000;
+                while !log.is_char_boundary(start) { start += 1; }
+                log.drain(..start);
+            }
+        }
+    }
+    pub fn clear_activity(&self) {
+        if let Ok(mut log) = self.activity.lock() { log.clear(); }
+        if let Ok(mut output) = self.model_output.lock() { output.clear(); }
     }
     fn lock(&self, r: &Run) -> Result<RunLock> {
         let file = std::fs::OpenOptions::new()
@@ -132,6 +149,13 @@ impl Engine {
         self.store.save(r)
     }
     pub fn analyze(&self, r: &mut Run, s: &Settings, cancel: &process::Cancel) -> Result<()> {
+        self.analyze_inner(r, s, cancel, true)
+    }
+    /// A queue turn: one proposal attempt, so a difficult ticket cannot starve others.
+    pub fn analyze_once(&self, r: &mut Run, s: &Settings, cancel: &process::Cancel) -> Result<()> {
+        self.analyze_inner(r, s, cancel, false)
+    }
+    fn analyze_inner(&self, r: &mut Run, s: &Settings, cancel: &process::Cancel, keep_retrying: bool) -> Result<()> {
         let _lock = self.lock(r)?;
         ensure!(
             matches!(
@@ -145,8 +169,6 @@ impl Engine {
             ),
             "Analyze only an unpatched run"
         );
-        ensure!(r.attempts < 3, "Proposal budget exhausted");
-        ensure!(r.prompts.len() < 3, "Prompt budget exhausted");
         ensure!(
             r.state != State::Review || r.evidence.level < 3,
             "A verified patch must be reviewed, not overwritten"
@@ -159,16 +181,67 @@ impl Engine {
             repository::copy_tree(&r.root.join("pristine"), &work)?;
         }
         self.transition(r, State::Analyzing)?;
-        let activity = self.activity.clone();
-        if let Ok(mut a) = activity.lock() {
-            a.clear();
+        self.report_activity(&format!("Working on {}/{}{}", r.owner, r.repo, r.issue_number.map(|n| format!(" #{n}")).unwrap_or_default()));
+        let mut settings = s.clone();
+        let mut feedback = r.notes.iter().rev().find(|note| note.contains("needs revision:")).cloned().unwrap_or_default();
+        if feedback.contains("truncat") || feedback.contains("length") {
+            let total = s.context_tokens.saturating_add(s.max_output_tokens);
+            settings.max_output_tokens = settings.max_output_tokens.saturating_mul(2).min(8192).min(total.saturating_sub(1024)).max(s.max_output_tokens);
+            settings.context_tokens = total.saturating_sub(settings.max_output_tokens);
         }
-        match model::propose_stream(r, s, cancel, &mut |chunk| {
-            if let Ok(mut a) = activity.lock() {
-                a.push_str(&process::scrub(chunk));
+        let mut failures = 0usize;
+        let outcome = loop {
+            if let Err(error) = process::check(cancel) { break Err(error); }
+            if let Ok(mut output) = self.model_output.lock() { output.clear(); }
+            let attempt = model::propose_attempt(r, &settings, cancel, &mut |chunk| {
+                if let Ok(mut output) = self.model_output.lock() {
+                    if output.len() + chunk.len() <= 64000 { output.push_str(chunk); }
+                }
+            }, &mut |status| self.report_activity(status), &feedback);
+            let attempt = match attempt {
+                Ok(proposal) if proposal.no_fix && r.mode == Mode::Issue => {
+                    self.report_activity(&format!("Model summary: {}", model::clip_text(&process::scrub(&proposal.explanation), 1000)));
+                    Err(anyhow::Error::new(model::RetryableProposalError("No supported repair yet. Inspect another source window, reconsider the issue, and either propose a supported repair or accurately explain the remaining obstacle. Never invent a fix.".into())))
+                }
+                other => other,
+            };
+            match attempt {
+                Ok(proposal) => break Ok(proposal),
+                Err(error) => {
+                    if process::check(cancel).is_err() { break Err(anyhow::anyhow!("Analysis stopped by you; saved attempts are in History")); }
+                    if error.downcast_ref::<model::RetryableProposalError>().is_none() { break Err(error); }
+                    failures = failures.saturating_add(1);
+                    feedback = format!("The last attempt failed validation: {error:#}. Correct this specific problem. Include every required field, especially explanation. Use exact source text and keep the reply concise.");
+                    r.notes.push(format!("Attempt {} needs revision: {error:#}", r.attempts));
+                    if r.notes.len() > 64 { r.notes.drain(..r.notes.len()-64); }
+                    r.updated = now();
+                    self.store.save(r)?;
+                    let message = format!("Attempt {} needs revision: {error:#}", r.attempts);
+                    self.report_activity(&message);
+                    let lower = message.to_ascii_lowercase();
+                    if lower.contains("truncat") || lower.contains("length") {
+                        let total = s.context_tokens.saturating_add(s.max_output_tokens);
+                        settings.max_output_tokens = (settings.max_output_tokens.saturating_mul(2)).min(8192).min(total.saturating_sub(1024)).max(s.max_output_tokens);
+                        settings.context_tokens = total.saturating_sub(settings.max_output_tokens);
+                        self.report_activity(&format!("Rebalanced the existing model window: {} input / {} output tokens", settings.context_tokens, settings.max_output_tokens));
+                    } else if lower.contains("context") || lower.contains("too long") {
+                        settings.context_chars = (settings.context_chars * 2 / 3).max(256);
+                        self.report_activity("Reducing source context automatically before retrying");
+                    }
+                    if !keep_retrying { break Err(error); }
+                    let delay = failures.min(8);
+                    self.report_activity(&format!("Retrying automatically in {delay}s. Stop current task is always available."));
+                    for _ in 0..delay * 10 {
+                        if process::check(cancel).is_err() { break; }
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                }
             }
-        }) {
+        };
+        match outcome {
             Ok(p) => {
+                self.report_activity(&format!("Model summary: {}", model::clip_text(&process::scrub(&p.explanation), 1500)));
+                self.report_activity("Proposal passed source and scope checks. Ready for your review; tests have not run yet.");
                 r.evidence = Evidence::default();
                 r.evidence.level = if p.no_fix || !p.tool_requests.is_empty() {
                     0
@@ -196,6 +269,9 @@ impl Engine {
                 )
             }
             Err(e) => {
+                if e.downcast_ref::<model::RetryableProposalError>().is_some() {
+                    self.report_activity("Attempt saved. This ticket will get another turn after the other queued tickets.");
+                } else { self.report_activity(&format!("Analysis paused: {e:#}")); }
                 r.notes.push(e.to_string());
                 self.transition(r, State::Cancelled)?;
                 Err(e)

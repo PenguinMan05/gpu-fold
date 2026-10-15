@@ -310,7 +310,7 @@ pub fn scan(root: &Path) -> Result<Preflight> {
             || lower.contains("code_of_conduct")
             || lower.contains("pull_request_template")
             || lower.contains("ai_policy")
-            || lower == "agents.md"
+            || crate::guidance::is_instruction(&name)
             || lower == "readme.md"
         {
             if ent.metadata()?.len() <= 64000
@@ -325,10 +325,11 @@ pub fn scan(root: &Path) -> Result<Preflight> {
     Ok(p)
 }
 pub fn context(root: &Path, task: &str, max_chars: usize) -> Result<(String, Vec<String>)> {
-    ensure!(
-        (2000..=64000).contains(&max_chars),
-        "Context budget must be 2,000-64,000 characters"
-    );
+    context_window(root, task, max_chars, 0)
+}
+
+pub fn context_window(root: &Path, task: &str, max_chars: usize, offset: usize) -> Result<(String, Vec<String>)> {
+    ensure!((256..=64000).contains(&max_chars), "Context budget must be 256-64,000 bytes");
     let terms = task
         .split(|c: char| !c.is_alphanumeric() && c != '_')
         .filter(|s| s.len() > 3)
@@ -336,7 +337,7 @@ pub fn context(root: &Path, task: &str, max_chars: usize) -> Result<(String, Vec
         .collect::<BTreeSet<_>>();
     let mut files = vec![];
     let mut map = String::new();
-    let map_cap = (max_chars / 4).min(6000);
+    let map_cap = (max_chars / 10).min(2000);
     for ent in walkdir::WalkDir::new(root).sort_by_file_name() {
         let ent = ent?;
         if !ent.file_type().is_file() {
@@ -347,7 +348,7 @@ pub fn context(root: &Path, task: &str, max_chars: usize) -> Result<(String, Vec
             .strip_prefix(root)?
             .to_string_lossy()
             .replace('\\', "/");
-        if map.len() < map_cap {
+        if map.len() + path.len() + 1 <= map_cap {
             map.push_str(&format!("{path}\n"));
         }
         if path.ends_with(".rs")
@@ -382,7 +383,8 @@ pub fn context(root: &Path, task: &str, max_chars: usize) -> Result<(String, Vec
         }
     }
     files.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-    let mut out = format!("REPOSITORY FILE MAP (untrusted data)\n{map}\n");
+    if !files.is_empty() { let shift = offset % files.len(); files.rotate_left(shift); }
+    let mut out = format!("FILE MAP (untrusted)\n{map}\n");
     let mut selected = vec![];
     for (_, path, src) in files {
         if selected.len() >= 20 {
@@ -398,22 +400,23 @@ pub fn context(root: &Path, task: &str, max_chars: usize) -> Result<(String, Vec
         } else {
             0
         };
-        let count = if src.len() > max_chars / 2 {
-            100
-        } else {
-            lines.len()
-        };
-        let numbered = lines
-            .iter()
-            .enumerate()
-            .skip(start)
-            .take(count)
-            .map(|(i, line)| format!("{}: {}\n", i + 1, line))
-            .collect::<String>();
-        let block = format!("\nBEGIN UNTRUSTED SOURCE {path}\n{numbered}END UNTRUSTED SOURCE\n");
-        if out.len() + block.len() > max_chars {
-            continue;
+        let header = format!("\nBEGIN UNTRUSTED SOURCE {path}\n");
+        let footer = "END UNTRUSTED SOURCE\n";
+        let mut block = header;
+        // Fit complete source lines rather than dropping an entire file when it is large.
+        for (i, line) in lines.iter().enumerate().skip(start) {
+            let numbered = format!("{}: {}\n", i + 1, line);
+            if out.len() + block.len() + numbered.len() + footer.len() > max_chars {
+                if block.ends_with(&format!("{path}\n")) {
+                    let available = max_chars.saturating_sub(out.len() + block.len() + footer.len() + 1);
+                    if available > 32 { block.push_str(crate::model::clip_text(&numbered, available)); block.push('\n'); }
+                }
+                break;
+            }
+            block.push_str(&numbered);
         }
+        if block.ends_with(&format!("{path}\n")) { continue; }
+        block.push_str(footer);
         out.push_str(&block);
         selected.push(path);
     }

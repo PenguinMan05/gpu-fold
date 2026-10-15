@@ -61,7 +61,7 @@ fn sensitive(p: &str) -> bool {
         || l.ends_with("build.rs")
 }
 pub fn validate_proposal(root: &Path, p: &Proposal) -> Result<()> {
-    ensure!(p.explanation.len() <= 20000, "Explanation too long");
+    ensure!(!p.explanation.trim().is_empty() && p.explanation.len() <= 20000, "A nonempty explanation is required (maximum 20,000 bytes)");
     ensure!(p.tool_requests.len() <= 10, "Tool-call budget exceeded");
     if p.no_fix {
         ensure!(

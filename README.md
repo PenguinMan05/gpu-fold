@@ -1,6 +1,6 @@
 # GPUFold
 
-GPUFold scans a public GitHub repository for open, unassigned issues and uses a local model you choose to prepare repair proposals. It works through selected tickets sequentially, saving a separate reviewable run for each issue.
+GPUFold scans a public GitHub repository for open, unassigned issues and uses a local model you choose to prepare repair proposals. It gives selected tickets turns, automatically revisits failed attempts, and saves a separate reviewable run for each issue.
 
 The queue is the first local workflow toward the peer-to-peer GPU swarm described in the [GPUFold concept](docs/GPUFOLD_CONCEPT.md). This build runs on one machine; it does not yet connect requester and volunteer nodes over a peer network.
 
@@ -24,7 +24,9 @@ To build from source with Rust 1.90+: `bash scripts/build-linux.sh --install`. E
 
 - Linux desktop and CLI, persistent run history, cancellation, and per-ticket review.
 - Public GitHub issue scanning with pagination, pull-request exclusion, unassigned filtering, and a queue of up to 10 tickets per batch.
-- Sequential inference using the configured local runtime/model or compatible local endpoint.
+- Schema-constrained local proposals, automatic correction retries, live activity and model summaries, and fair queue turns for unresolved tickets.
+- Automatic GGUF token counting and source-context fitting, without a separate tokenizer file.
+- Scoped project guidance from AGENTS.md, SKILL.md / skills.md, CLAUDE.md, GEMINI.md, Copilot instructions, and editor rules.
 - Bounded Rust proposal validation and an isolated, offline Cargo test sandbox.
 - Explicit review and verification before publishing a draft pull request.
 

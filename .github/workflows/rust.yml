@@ -122,6 +122,6 @@ jobs:
             echo "Release $tag already exists; existing assets are preserved."
           else
             gh release create "$tag" release-assets/dist/GPUFold_*.deb release-assets/dist/GPUFold_*.deb.sha256 \
-              --target "$GITHUB_SHA" --title "GPUFold ${version} — GGUF engine included" \
+              --target "$GITHUB_SHA" --title "GPUFold ${version} — Persistent retries and live activity" \
               --notes-file docs/RELEASE_NOTES.md --prerelease
           fi

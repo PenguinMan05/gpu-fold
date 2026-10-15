@@ -1,5 +1,6 @@
 pub mod code;
 pub mod github;
+pub mod guidance;
 pub mod mcp;
 pub mod model;
 pub mod probe;
