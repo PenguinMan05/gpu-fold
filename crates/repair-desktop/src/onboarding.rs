@@ -620,14 +620,20 @@ mod tests {
         app.engine.report_activity("Inspecting the stylus implementation");
         app.engine.say(repair_core::types::DialogueRole::Assistant,"The issue is in the input event translation.");
         let ctx=egui::Context::default();
+        let mut tick=0u64;
         for open in [false,true] {
             app.show_conversation=open;
-            let output=ctx.run(egui::RawInput {screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(1100.0,800.0))),..Default::default()},|ctx| {
-                app.task_controls(ctx);
-                egui::CentralPanel::default().show(ctx,|ui| { ui.label("Workspace"); });
-                app.conversation_window(ctx);
-            });
-            let rendered=format!("{:?}",output.shapes);
+            let mut rendered=String::new();
+            // Windows measure their first frame before painting; exercise steady state.
+            for _ in 0..6 {
+                tick+=1;
+                let output=ctx.run(egui::RawInput {time:Some(tick as f64 * 0.1),screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(1100.0,800.0))),..Default::default()},|ctx| {
+                    app.task_controls(ctx);
+                    egui::CentralPanel::default().show(ctx,|ui| { ui.label("Workspace"); });
+                    app.conversation_window(ctx);
+                });
+                rendered=format!("{:?}",output.shapes);
+            }
             assert!(rendered.contains("AI conversation") && rendered.contains("Stop current task"));
             assert!(!rendered.contains("Working · live activity"));
             if open { assert!(rendered.contains("input event translation")); }

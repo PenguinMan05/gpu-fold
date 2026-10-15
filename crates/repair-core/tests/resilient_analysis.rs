@@ -284,3 +284,15 @@ fn citation_anchoring_preserves_real_indentation_without_fuzzy_code_matching() {
     assert_eq!(p.citations[0].start_line,2);
     assert_eq!(p.citations[0].snippet,"    fn stylus() { exact_behavior(); }");
 }
+
+#[test]
+fn repeated_invalid_patches_trigger_a_related_source_search() {
+    let mut fixture=Fixture::new();
+    std::fs::write(fixture.run.root.join("pristine/src/stylus.rs"),"pub fn stylus_pressure() -> u32 { 0 }\n").unwrap();
+    std::fs::write(fixture.run.root.join("pristine/src/input.rs"),"pub fn process_stylus_input() {}\n").unwrap();
+    let mut bad=good(); bad["citations"][0]["path"]=json!("src/stylus.rs"); bad["citations"][0]["snippet"]=json!("invented");
+    fixture.run.model_outputs=vec![bad.to_string(),bad.to_string()]; fixture.run.attempts=2;
+    let result=repair_core::inspection::broaden_repeated_attempt(&mut fixture.run,&process::cancel_token()).unwrap().unwrap();
+    assert!(result.contains("Changed strategy") && result.contains("src/input.rs"));
+    assert!(fixture.run.inspections.iter().any(|request|request.path=="src/input.rs"));
+}

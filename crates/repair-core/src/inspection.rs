@@ -146,3 +146,17 @@ pub fn anchor_citations(root: &Path, proposal: &mut Proposal, allowed: &[String]
     }
     Ok(notes)
 }
+
+/// Repeating an invalid patch triggers a concrete search for related implementations.
+pub fn broaden_repeated_attempt(run: &mut Run, cancel: &process::Cancel) -> Result<Option<String>> {
+    if run.model_outputs.len()<2 || run.attempts % 3 != 2 { return Ok(None); }
+    let n=run.model_outputs.len();
+    let (Ok(current),Ok(previous))=(crate::model::parse_proposal(&run.model_outputs[n-1]),crate::model::parse_proposal(&run.model_outputs[n-2])) else { return Ok(None); };
+    if serde_json::to_value(&current.edits)? != serde_json::to_value(&previous.edits)? || serde_json::to_value(&current.citations)? != serde_json::to_value(&previous.citations)? { return Ok(None); }
+    let path=current.citations.first().map(|citation|citation.path.as_str()).or_else(||current.edits.first().map(|edit|edit.path.as_str()));
+    let Some(stem)=path.and_then(|path|Path::new(path).file_stem()).and_then(|name|name.to_str()) else { return Ok(None); };
+    if stem.len()<3 || matches!(stem,"lib"|"main"|"mod") { return Ok(None); }
+    let request=ToolRequest { server:SERVER.into(),name:"search_code".into(),arguments:json!({"query":stem}).as_object().cloned().unwrap_or_default() };
+    let found=execute(run,&request,cancel)?;
+    Ok(Some(format!("The same invalid patch was returned again. Changed strategy: searched related implementations and callers.\n{found}")))
+}

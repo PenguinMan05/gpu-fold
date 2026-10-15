@@ -254,6 +254,10 @@ impl Engine {
                     if error.downcast_ref::<model::RetryableProposalError>().is_none() { break Err(error); }
                     failures = failures.saturating_add(1);
                     crate::inspection::focus_rejected(r);
+                    if let Ok(Some(result))=crate::inspection::broaden_repeated_attempt(r,cancel) {
+                        self.report_activity(&result); r.tool_results.push(result);
+                        if r.tool_results.len()>8 { r.tool_results.remove(0); }
+                    }
                     feedback = format!("Last result: {error:#}. Re-read the implicated source shown in requested inspections. Use gpufold-source read_file/search_code for implementations, callers and tests when evidence is missing. Change the approach; do not repeat unchanged guesses. Use exact source and include all fields. Previous summary: {}", r.model_outputs.last().map(|raw| model::proposal_summary(raw)).unwrap_or_default());
                     r.notes.push(format!("Attempt {} needs revision: {error:#}", r.attempts));
                     if r.notes.len() > 64 { r.notes.drain(..r.notes.len()-64); }
