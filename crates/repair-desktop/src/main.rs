@@ -1634,13 +1634,13 @@ impl eframe::App for App {
             });
         }
 
-        if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Num1)) {
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::Num1)) {
             self.page = Page::Home;
         }
-        if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Num2)) {
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::Num2)) {
             self.page = Page::Settings;
         }
-        if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Num3)) {
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::Num3)) {
             self.page = Page::Task;
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(150));
