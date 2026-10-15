@@ -31,28 +31,43 @@ fn applies(path: &str, text: &str, source: &[String]) -> bool {
 }
 
 pub fn context(root: &Path, source: &[String], budget: usize) -> Result<(String, Vec<String>)> {
-    let mut files = Vec::new();
+    let mut candidates = Vec::new();
     for entry in walkdir::WalkDir::new(root).sort_by_file_name() {
         let entry = entry?;
         if !entry.file_type().is_file() { continue; }
         let path = entry.path().strip_prefix(root)?.to_string_lossy().replace('\\', "/");
-        if !is_instruction(&path) || entry.metadata()?.len() > 64000 { continue; }
+        if is_instruction(&path) && entry.metadata()?.len() <= 64000 { candidates.push(path); }
+    }
+    // Find governing AGENTS files before optional skills, even in large skill trees.
+    candidates.sort_by_key(|path| {
+        let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+        let priority = if name.starts_with("agents.") { 0 } else if name == "skill.md" { 2 } else { 1 };
+        (priority, path.matches('/').count(), path.clone())
+    });
+    let mut files = Vec::new();
+    let mut reserved = 0usize;
+    for path in candidates.into_iter().take(256) {
         let text = validation::text(root, &path)?;
-        if applies(&path, &text, source) { files.push((path, process::scrub(&text))); }
+        if !applies(&path, &text, source) { continue; }
+        let lower = path.to_ascii_lowercase();
+        let global = lower.starts_with(".github/") || lower.starts_with(".cursor/") || lower.starts_with(".windsurf/") || !path.contains('/') || lower.ends_with("/skill.md");
+        let scope = if global { "repository conventions; skills are optional" } else { path.rsplit_once('/').map_or("repository", |(parent,_)| parent) };
+        let header = format!("\nPROJECT GUIDANCE {path} (scope: {scope})\n");
+        let overhead = header.len() + "\nEND GUIDANCE\n".len();
+        if reserved + overhead + 32 > budget { continue; }
+        reserved += overhead + 32;
+        files.push((path,header,process::scrub(&text)));
         if files.len() >= 32 { break; }
     }
-    // Broad conventions first; a more specific directory's guidance takes precedence.
-    files.sort_by_key(|(path, _)| (path.matches('/').count(), path.clone()));
+    // Broad conventions first, followed by rules for more specific directories.
+    files.sort_by_key(|(path,_,_)| (path.matches('/').count(), path.clone()));
+    let extra = budget.saturating_sub(reserved) / files.len().max(1);
     let mut out = String::new();
     let mut included = Vec::new();
-    let per_file = budget.saturating_sub(files.len() * 90) / files.len().max(1);
-    for (path, text) in files {
-        if per_file < 24 { break; }
-        let text = crate::model::clip_text(&text, per_file);
-        let scope = if path.starts_with('.') || !path.contains('/') || path.to_ascii_lowercase().ends_with("/skill.md") { "repository conventions; skills are optional" } else { path.rsplit_once('/').map_or("repository", |(parent,_)| parent) };
-        let block = format!("\nPROJECT GUIDANCE {path} (scope: {scope})\n{text}\nEND GUIDANCE\n");
-        if out.len() + block.len() > budget { break; }
-        out.push_str(&block);
+    for (path,header,text) in files {
+        out.push_str(&header);
+        out.push_str(crate::model::clip_text(&text, 32 + extra));
+        out.push_str("\nEND GUIDANCE\n");
         included.push(path);
     }
     Ok((out, included))

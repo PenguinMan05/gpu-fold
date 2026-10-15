@@ -113,6 +113,7 @@ impl ModelProvider for LocalHttpProvider {
                 let mut body = json!({"model":self.settings.model_id,"messages":[{"role":"system","content":SYSTEM},{"role":"user","content":prompt}],"temperature":0,"seed":42,"max_tokens":self.settings.max_output_tokens.min(8192),"stream":true});
                 if self.settings.runtime_kind == "bundled" && self.settings.model_service == "file" {
                     body["response_format"] = json!({"type":"json_object","schema":proposal_schema()});
+                    body["reasoning_effort"] = json!("none");
                 } else {
                     body["response_format"] = json!({"type":"json_schema","json_schema":{"name":"repair_proposal","strict":true,"schema":proposal_schema()}});
                 }
@@ -379,6 +380,9 @@ pub fn propose_attempt(
         let p = parse_proposal(&raw)?;
         if run.mode == Mode::Sweep { ensure!(p.edits.is_empty() && p.reproduction.is_none(), "Sweep may report findings only"); }
         validation::validate_proposal(&run.root.join("pristine"), &p)?;
+        if run.mode == Mode::Issue && !p.no_fix && p.tool_requests.is_empty() {
+            ensure!(!p.edits.is_empty(), "Issue response has no repair edits; supply an actual supported code fix or report no_fix:true");
+        }
         for request in &p.tool_requests {
             ensure!(run.mcp_approvals.iter().any(|a| a.enabled && a.server == request.server && a.pin.name == request.name), "Model requested a tool outside the approved allowlist");
             crate::mcp::workspace_args(&serde_json::Value::Object(request.arguments.clone()), &run.root.join("work"))?;
@@ -405,7 +409,7 @@ fn preview_with_feedback(run: &Run, s: &Settings, correction: &str, cancel: Opti
     loop {
         if let Some(cancel) = cancel { process::check(cancel)?; }
         let (context, paths) = repository::context_window(&run.root.join("pristine"), &run.task, budget, (run.attempts / 2) as usize)?;
-        let guidance_budget = (budget / 2).clamp(128, 12000);
+        let guidance_budget = (budget / 2).clamp(256, 12000);
         let (guidance, _) = crate::guidance::context(&run.root.join("pristine"), &paths, guidance_budget)?;
         let task_budget = (budget / 2).clamp(256, 6000);
         let extra_budget = (budget / 4).clamp(64, 1000);

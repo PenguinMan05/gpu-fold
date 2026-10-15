@@ -262,7 +262,7 @@ impl App {
                 egui::ScrollArea::vertical().id_salt("live_activity").max_height(160.0).stick_to_bottom(true).show(ui, |ui| {
                     ui.add(egui::Label::new(&activity).wrap().selectable(true));
                 });
-                let summary = self.engine.model_output.lock().map(|raw| repair_core::model::proposal_summary(raw)).unwrap_or_default();
+                let summary = self.engine.model_output.lock().map(|raw| repair_core::model::proposal_summary(&raw)).unwrap_or_default();
                 if !summary.is_empty() {
                     ui.strong("Model summary");
                     egui::ScrollArea::vertical().id_salt("live_model_summary").max_height(70.0).stick_to_bottom(true).show(ui, |ui| {
@@ -1283,7 +1283,7 @@ impl App {
         );
         ui.label("Model license (optional record)");
         ui.text_edit_singleline(&mut self.settings.model_license);
-        ui.label("Tokenizer JSON (optional; improves context estimates)");
+        ui.label("Tokenizer JSON (external servers only; GGUF uses its included tokenizer)");
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.settings.tokenizer_path);
             if ui.button("Choose tokenizer").clicked() {

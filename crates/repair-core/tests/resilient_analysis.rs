@@ -185,3 +185,14 @@ fn unresolved_attempts_explore_another_window_of_a_large_source_file() {
     assert!(later.contains("item_40()"));
     assert_ne!(first,later);
 }
+
+#[test]
+fn an_empty_issue_fix_is_retried_instead_of_being_reported_as_done() {
+    let mut fixture = Fixture::new();
+    let mut empty = good(); empty["edits"]=json!([]); empty["reproduction"]=Value::Null;
+    let (settings,server) = server(vec![empty,good()]);
+    assert!(fixture.engine.analyze_once(&mut fixture.run,&settings,&process::cancel_token()).is_err());
+    fixture.engine.analyze_once(&mut fixture.run,&settings,&process::cancel_token()).unwrap();
+    assert!(!fixture.run.proposal.as_ref().unwrap().edits.is_empty());
+    server.join().unwrap();
+}
