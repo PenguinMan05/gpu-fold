@@ -63,13 +63,8 @@ impl Engine {
         pinned_commit: &str,
         cancel: &process::Cancel,
     ) -> Result<Run> {
-        let r = repository::create_queued_issue(
-            &self.store.root,
-            url,
-            issue,
-            pinned_commit,
-            cancel,
-        )?;
+        let r =
+            repository::create_queued_issue(&self.store.root, url, issue, pinned_commit, cancel)?;
         self.store.save(&r)?;
         Ok(r)
     }

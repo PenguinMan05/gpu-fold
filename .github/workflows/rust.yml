@@ -105,7 +105,10 @@ jobs:
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
           tag="v${version}"
           (cd release-assets/dist && sha256sum -c ./*.deb.sha256)
-          if gh release view "$tag" >/dev/null 2>&1; then
+          current_head="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          if [[ "$current_head" != "$GITHUB_SHA" ]]; then
+            echo "A newer commit is being verified; this older build will not be released."
+          elif gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag already exists; existing assets are preserved."
           else
             gh release create "$tag" release-assets/dist/GPUFold_*.deb release-assets/dist/GPUFold_*.deb.sha256 \

@@ -106,14 +106,19 @@ fn connection_check_requires_a_loaded_model_and_returns_model_choices() {
     for (body, expected) in [
         (r#"{"data":[]}"#, None),
         (r#"{"data":[{"id":""}]}"#, None),
-        (r#"{"data":[{"id":"coder-one"},{"id":"coder-two"}]}"#, Some(vec!["coder-one", "coder-two"])),
+        (
+            r#"{"data":[{"id":"coder-one"},{"id":"coder-two"}]}"#,
+            Some(vec!["coder-one", "coder-two"]),
+        ),
     ] {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let body = body.to_owned();
         let server = std::thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
-            socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
             let mut request = [0; 4096];
             let n = socket.read(&mut request).unwrap();
             assert!(String::from_utf8_lossy(&request[..n]).starts_with("GET /v1/models "));
@@ -124,7 +129,10 @@ fn connection_check_requires_a_loaded_model_and_returns_model_choices() {
         let result = repair_core::model::available_models(&settings);
         match expected {
             Some(ids) => assert_eq!(result.unwrap(), ids),
-            None => assert!(result.unwrap_err().to_string().contains("no model is loaded")),
+            None => assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("no model is loaded")),
         }
         server.join().unwrap();
     }

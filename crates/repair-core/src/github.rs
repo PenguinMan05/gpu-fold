@@ -152,7 +152,10 @@ pub fn tickets(
     unassigned_only: bool,
     cancel: &process::Cancel,
 ) -> Result<Vec<Ticket>> {
-    ensure!((1..=500).contains(&limit), "Ticket scan limit must be 1–500");
+    ensure!(
+        (1..=500).contains(&limit),
+        "Ticket scan limit must be 1–500"
+    );
     process::check(cancel)?;
     parse_repo(&format!("https://github.com/{owner}/{repo}"))?;
     let _metadata = public_repo(owner, repo)?;
@@ -170,9 +173,11 @@ pub fn tickets(
             ("page", page.to_string()),
         ];
         let value = response(
-            http.get(format!("https://api.github.com/repos/{owner}/{repo}/issues"))
-                .query(&params)
-                .send()?,
+            http.get(format!(
+                "https://api.github.com/repos/{owner}/{repo}/issues"
+            ))
+            .query(&params)
+            .send()?,
         )?;
         let issues = value.as_array().context("Invalid issue list response")?;
         let page_len = issues.len();
@@ -443,7 +448,8 @@ mod ticket_tests {
             "updated_at": "2026-10-14T12:00:00Z"
         });
         if pull_request {
-            value["pull_request"] = json!({"url":"https://api.github.com/repos/example/project/pulls/17"});
+            value["pull_request"] =
+                json!({"url":"https://api.github.com/repos/example/project/pulls/17"});
         }
         value
     }
