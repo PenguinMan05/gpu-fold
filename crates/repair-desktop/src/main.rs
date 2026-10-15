@@ -534,50 +534,6 @@ impl App {
                 }
                 ui.label(format!("{selected_count} selected"));
             });
-            egui::ScrollArea::vertical()
-                .id_salt("issue_list")
-                .max_height(320.0)
-                .show(ui, |ui| {
-                    for ticket in &self.tickets {
-                        egui::Frame::group(ui.style())
-                            .inner_margin(egui::Margin::same(10.0))
-                            .show(ui, |ui| {
-                                ui.horizontal_wrapped(|ui| {
-                                    let was_seen = seen.contains(&ticket.number);
-                                    let can_select = !self.skip_seen_tickets || !was_seen;
-                                    let mut selected =
-                                        self.selected_tickets.contains(&ticket.number);
-                                    if ui
-                                        .add_enabled(
-                                            can_select,
-                                            egui::Checkbox::new(&mut selected, ""),
-                                        )
-                                        .changed()
-                                    {
-                                        if selected {
-                                            self.selected_tickets.insert(ticket.number);
-                                        } else {
-                                            self.selected_tickets.remove(&ticket.number);
-                                        }
-                                    }
-                                    ui.hyperlink_to(
-                                        format!("#{} · {}", ticket.number, ticket.title),
-                                        &ticket.url,
-                                    );
-                                    ui.small(format!(
-                                        "{} comment(s) · updated {}",
-                                        ticket.comments, ticket.updated_at
-                                    ));
-                                    if was_seen {
-                                        ui.weak("already in GPUFold history");
-                                    }
-                                    if !ticket.labels.is_empty() {
-                                        ui.weak(ticket.labels.join(" · "));
-                                    }
-                                });
-                            });
-                    }
-                });
             if selected_count > 10 {
                 ui.colored_label(
                     onboarding::AMBER,
@@ -685,6 +641,51 @@ impl App {
                 ui.label("Connect your model in Setup to enable Start.");
             }
             ui.small("Tickets are analyzed sequentially. GPUFold does not run repository scripts, apply patches, or publish pull requests during queue processing; review and verify each proposal first.");
+            egui::ScrollArea::vertical()
+                .id_salt("issue_list")
+                .max_height(320.0)
+                .show(ui, |ui| {
+                    for ticket in &self.tickets {
+                        egui::Frame::group(ui.style())
+                            .inner_margin(egui::Margin::same(10.0))
+                            .show(ui, |ui| {
+                                ui.horizontal_wrapped(|ui| {
+                                    let was_seen = seen.contains(&ticket.number);
+                                    let can_select = !self.skip_seen_tickets || !was_seen;
+                                    let mut selected =
+                                        self.selected_tickets.contains(&ticket.number);
+                                    if ui
+                                        .add_enabled(
+                                            can_select,
+                                            egui::Checkbox::new(&mut selected, ""),
+                                        )
+                                        .changed()
+                                    {
+                                        if selected {
+                                            self.selected_tickets.insert(ticket.number);
+                                        } else {
+                                            self.selected_tickets.remove(&ticket.number);
+                                        }
+                                    }
+                                    ui.hyperlink_to(
+                                        format!("#{} · {}", ticket.number, ticket.title),
+                                        &ticket.url,
+                                    );
+                                    ui.small(format!(
+                                        "{} comment(s) · updated {}",
+                                        ticket.comments, ticket.updated_at
+                                    ));
+                                    if was_seen {
+                                        ui.weak("already in GPUFold history");
+                                    }
+                                    if !ticket.labels.is_empty() {
+                                        ui.weak(ticket.labels.join(" · "));
+                                    }
+                                });
+                            });
+                    }
+                });
+
         }
 
         if self.tickets_repository.is_some() && self.tickets.is_empty() && tickets_match_repository

@@ -146,8 +146,12 @@ pub fn available_models(s: &Settings) -> Result<Vec<String>> {
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(5))
         .build()?;
-    let r = http.get(url).send()?;
-    let data = crate::github::response(r)?;
+    let mut response = http.get(url).send().context("Could not reach your local model app. Start its server and check the address.")?;
+    ensure!(response.status().is_success(), "Local model server returned HTTP {}. It may still be loading; check the model app and retry.", response.status().as_u16());
+    let mut bytes = Vec::new();
+    response.by_ref().take(2_000_001).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() <= 2_000_000, "Local model list exceeds the response limit");
+    let data: serde_json::Value = serde_json::from_slice(&bytes).context("This address did not return a compatible model list. Check the local server address.")?;
     let models = data["data"]
         .as_array()
         .context("Expected models list")?
