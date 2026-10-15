@@ -507,18 +507,44 @@ impl App {
                         }
                     }
                 });
-                let running = self.engine.runtime.lock().map(|mut r| r.running()).unwrap_or(false);
-                if ui.add_enabled(approved && !running, egui::Button::new("Start model and connect")).clicked() { self.start_model(); }
-                if running { ui.label("Your model engine is running. Use Check connection below, or stop it before choosing another model."); }
+                let running = self
+                    .engine
+                    .runtime
+                    .lock()
+                    .map(|mut r| r.running())
+                    .unwrap_or(false);
+                if ui
+                    .add_enabled(
+                        approved && !running,
+                        egui::Button::new("Start model and connect"),
+                    )
+                    .clicked()
+                {
+                    self.start_model();
+                }
+                if running {
+                    ui.label("Your model engine is running. Use Check connection below, or stop it before choosing another model.");
+                }
                 ui.small("GPUFold waits for loading to finish and checks the connection automatically. Keep the app open while it loads.");
             }
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Check connection").clicked() { self.check_model(); }
-                let running = self.engine.runtime.lock().map(|mut r| r.running()).unwrap_or(false);
+                if ui.button("Check connection").clicked() {
+                    self.check_model();
+                }
+                let running = self
+                    .engine
+                    .runtime
+                    .lock()
+                    .map(|mut r| r.running())
+                    .unwrap_or(false);
                 if running && ui.button("Stop model engine").clicked() {
-                    if let Ok(mut runtime) = self.engine.runtime.lock() { runtime.unload(); }
+                    if let Ok(mut runtime) = self.engine.runtime.lock() {
+                        runtime.unload();
+                    }
                     self.connection_key = None;
-                    self.message = "Model engine stopped. You can choose another model and start it again.".into();
+                    self.message =
+                        "Model engine stopped. You can choose another model and start it again."
+                            .into();
                 }
             });
 

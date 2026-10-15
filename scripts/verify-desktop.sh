@@ -26,16 +26,19 @@
   fi
   sleep 1
   import -window root dist/desktop-preview.png
-  xdotool key --window "$app_window" ctrl+1
+  xdotool windowfocus --sync "$app_window"
+  xdotool key ctrl+1
   sleep 1
   import -window root dist/dashboard-preview.png
-  xdotool key --window "$app_window" ctrl+3
+  xdotool key ctrl+3
   sleep 1
   import -window root dist/issues-preview.png
-  xdotool key --window "$app_window" ctrl+2
+  xdotool key ctrl+2
   sleep 1
   import -window root dist/setup-preview.png
   kill -0 "$app_pid"
   test -s dist/desktop-preview.png
+  cmp -s dist/dashboard-preview.png dist/issues-preview.png && { echo "ERROR: navigation did not change the visible page"; exit 1; }
+  cmp -s dist/issues-preview.png dist/setup-preview.png && { echo "ERROR: setup shortcut did not change the visible page"; exit 1; }
   echo "SUCCESS: native desktop remained running and a screenshot was captured."
 )

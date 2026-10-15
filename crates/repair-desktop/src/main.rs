@@ -685,7 +685,6 @@ impl App {
                             });
                     }
                 });
-
         }
 
         if self.tickets_repository.is_some() && self.tickets.is_empty() && tickets_match_repository
@@ -1707,10 +1706,12 @@ impl eframe::App for App {
             egui::ScrollArea::vertical()
                 .id_salt(format!("page_{:?}", self.page))
                 .show(ui, |ui| {
-                    ui.set_max_width(1020.0);
+                    ui.set_max_width(ui.available_width().min(1020.0));
 
                     ui.add_space(12.0);
-                    if self.message_error && (self.page != Page::Settings || self.connection_error.is_none()) {
+                    if self.message_error
+                        && (self.page != Page::Settings || self.connection_error.is_none())
+                    {
                         onboarding::card(ui, |ui| {
                             ui.colored_label(onboarding::AMBER, "This step needs attention");
                             ui.label(onboarding::friendly_error(&self.message));
@@ -1840,11 +1841,11 @@ fn main() -> eframe::Result<()> {
             visuals.widgets.inactive.rounding = egui::Rounding::same(6.0);
             visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(222, 232, 249);
             visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(222, 232, 249);
-            visuals.widgets.active.bg_fill = egui::Color32::from_rgb(57, 82, 137);
-            visuals.widgets.active.weak_bg_fill = egui::Color32::from_rgb(57, 82, 137);
-            visuals.widgets.active.fg_stroke.color = egui::Color32::WHITE;
-            visuals.selection.bg_fill = egui::Color32::from_rgb(57, 82, 137);
-            visuals.selection.stroke.color = egui::Color32::WHITE;
+            visuals.widgets.active.bg_fill = egui::Color32::from_rgb(221, 232, 251);
+            visuals.widgets.active.weak_bg_fill = egui::Color32::from_rgb(221, 232, 251);
+            visuals.widgets.active.fg_stroke.color = egui::Color32::from_rgb(35, 48, 68);
+            visuals.selection.bg_fill = egui::Color32::from_rgb(221, 232, 251);
+            visuals.selection.stroke.color = egui::Color32::from_rgb(35, 48, 68);
             visuals.hyperlink_color = egui::Color32::from_rgb(47, 86, 151);
             visuals.window_rounding = egui::Rounding::same(10.0);
             visuals.override_text_color = Some(egui::Color32::from_rgb(35, 48, 68));
