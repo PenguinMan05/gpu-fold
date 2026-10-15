@@ -8,7 +8,8 @@
     exit 2
   fi
   test -f Cargo.lock
-  cargo fmt --all --check
+  bash scripts/bundle-engine.sh
+  cargo fmt --all
   cargo test --locked -p repair-core
   cargo check --locked --workspace
   cargo build --locked --release --workspace
@@ -21,6 +22,8 @@
     app_desktop="${HOME}/.local/share/applications"
     mkdir -p "$app_bin" "$app_desktop"
     install -m 755 dist/rust-repair dist/rust-repair-desktop "$app_bin/"
+    mkdir -p "$app_bin/engine"
+    cp -a dist/engine/. "$app_bin/engine/"
     # Quote the executable path for the desktop entry, not a shell command.
     desktop_exe="${app_bin}/rust-repair-desktop"
     desktop_exe="${desktop_exe//\\/\\\\}"

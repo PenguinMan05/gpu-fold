@@ -2,7 +2,7 @@ use crate::{process, types::Settings};
 use anyhow::{ensure, Context, Result};
 use std::{
     io::Read,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
     time::Duration,
@@ -49,6 +49,11 @@ impl ManagedRuntime {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if settings.runtime_kind == "bundled" {
+            let engine = bundled_engine_path()?;
+            let directory = engine.parent().context("Bundled engine directory is missing")?;
+            command.env("LD_LIBRARY_PATH", directory).env("GGML_BACKEND_PATH", directory);
+        }
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -56,7 +61,7 @@ impl ManagedRuntime {
         }
         let mut child = command
             .spawn()
-            .context("Could not start the selected Rust inference runtime")?;
+            .context("Could not start the local model engine")?;
         if let Ok(mut log) = self.log.lock() {
             log.clear();
         }
@@ -111,7 +116,8 @@ impl ManagedRuntime {
 }
 /// Build arguments without a shell. Selecting a GGUF must use mistralrs -f, not -m.
 pub fn launch_command(settings: &Settings) -> Result<Command> {
-    let exe = Path::new(&settings.runtime_path);
+    let bundled = if settings.runtime_kind == "bundled" { Some(bundled_engine_path()?) } else { None };
+    let exe = bundled.as_deref().unwrap_or_else(|| Path::new(&settings.runtime_path));
     let model = Path::new(&settings.model_path);
     ensure!(
         exe.is_absolute() && exe.is_file(),
@@ -138,7 +144,7 @@ pub fn launch_command(settings: &Settings) -> Result<Command> {
     let context = (settings.context_tokens + settings.max_output_tokens + 512).to_string();
     let mut command = Command::new(exe);
     match settings.runtime_kind.as_str() {
-        "llama_cpp" => {
+        "llama_cpp" | "bundled" => {
             ensure!(
                 model.is_file()
                     && model
@@ -154,8 +160,13 @@ pub fn launch_command(settings: &Settings) -> Result<Command> {
                     "--ctx-size",
                     &context,
                     "--n-gpu-layers",
-                    if settings.cpu { "0" } else { "99" },
+                    if settings.cpu { "0" } else if settings.runtime_kind == "bundled" { "auto" } else { "99" },
                 ]);
+            if settings.runtime_kind == "bundled" {
+                validate_gguf_model(model)?;
+                command.args(["--alias", "GPUFold-local", "--no-webui", "--parallel", "1"]);
+                if settings.cpu { command.args(["--device", "none"]); }
+            }
         }
         "mistralrs" => {
             command
@@ -177,6 +188,43 @@ pub fn launch_command(settings: &Settings) -> Result<Command> {
     }
     Ok(command)
 }
+/// Resolve only app-owned engine locations. No executable path is required from the user.
+pub fn bundled_engine_path() -> Result<PathBuf> {
+    let installed = PathBuf::from("/usr/lib/gpufold/engine/llama-server");
+    if installed.is_file() { return Ok(installed); }
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(parent) = executable.parent() {
+            let adjacent = parent.join("engine/llama-server");
+            if adjacent.is_file() { return Ok(adjacent); }
+        }
+    }
+    let development = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../dist/engine/llama-server");
+    if development.is_file() { return Ok(development.canonicalize()?); }
+    anyhow::bail!("GPUFold's included model engine is missing. Reinstall the complete GPUFold package.")
+}
+
+pub fn validate_gguf_model(model: &Path) -> Result<()> {
+    ensure!(model.is_absolute() && model.is_file(), "Choose an existing local GGUF model file.");
+    ensure!(model.extension().and_then(|s| s.to_str()).is_some_and(|s| s.eq_ignore_ascii_case("gguf")), "Choose a .gguf model file.");
+    let mut magic = [0u8; 4];
+    std::fs::File::open(model)?.read_exact(&mut magic).context("The model file is empty or incomplete")?;
+    ensure!(&magic == b"GGUF", "This is not a GGUF model file. Select the model weights, not a download page or an archive.");
+    Ok(())
+}
+
+/// Choose an unused loopback port and configure the bundled engine from a model file alone.
+pub fn local_gguf_settings(settings: &Settings) -> Result<Settings> {
+    validate_gguf_model(Path::new(&settings.model_path))?;
+    let port = std::net::TcpListener::bind(("127.0.0.1", 0))?.local_addr()?.port();
+    let mut settings = settings.clone();
+    settings.runtime_kind = "bundled".into();
+    settings.runtime_path.clear();
+    settings.model_service = "file".into();
+    settings.model_id = "GPUFold-local".into();
+    settings.endpoint = format!("http://127.0.0.1:{port}/v1/chat/completions");
+    Ok(settings)
+}
+
 impl Drop for ManagedRuntime {
     fn drop(&mut self) {
         self.unload();
@@ -264,6 +312,7 @@ mod launch_tests {
         let model = root.join("my coder; model.gguf");
         std::fs::write(&model, b"GGUF").unwrap();
         let mut settings = Settings::default();
+        settings.runtime_kind = "mistralrs".into();
         settings.runtime_path = "/bin/true".into();
         settings.model_path = model.display().to_string();
         let args = |s: &Settings| {

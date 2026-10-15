@@ -92,7 +92,7 @@ impl App {
     }
 
     fn start_model(&mut self) {
-        let settings = match self.normalized_settings() {
+        let settings = match repair_core::runtime::local_gguf_settings(&self.settings) {
             Ok(settings) => settings,
             Err(error) => {
                 self.connection_error = Some(format!("{error:#}"));
@@ -241,7 +241,7 @@ impl App {
             } else {
                 "Let's get your model ready"
             });
-            ui.label(if self.model_ready() { "Paste a public Rust repository URL in Issues, scan for open issues, then select the ones you want GPUFold to work on." } else { "The setup guide connects your model in a few steps. A model app or engine must be running before GPUFold can generate a repair." });
+            ui.label(if self.model_ready() { "Paste a public Rust repository URL in Issues, scan for open issues, then select the ones you want GPUFold to work on." } else { "Choose your local GGUF model in Setup and click Load model. GPUFold includes the engine and starts it for you." });
             ui.add_space(8.0);
             let ready = self.model_ready();
             if ui
@@ -266,7 +266,7 @@ impl App {
         ui.add_space(16.0);
         card(ui, |ui| {
             ui.strong("How a repair moves through GPUFold");
-            ui.label("1. Choose issues     →     2. Generate proposals     →     3. Review changes     →     4. Test and share");
+            ui.label("1. Choose issues     |     2. Generate proposals     |     3. Review changes     |     4. Test and share");
             ui.small("Each issue gets its own saved result. You approve code changes and any draft pull request.");
         });
         ui.add_space(18.0);
@@ -308,12 +308,12 @@ impl App {
 
     pub(super) fn settings_page(&mut self, ui: &mut egui::Ui) {
         ui.heading("Set up GPUFold");
-        ui.label("Connect your model first. Then choose a repository and start a batch.");
+        ui.label("Choose your local GGUF file, load it, then select a repository and issues.");
         ui.small("Your choices are saved automatically.");
         ui.add_space(14.0);
         ui.horizontal_wrapped(|ui| {
             for (step, label) in [
-                (0, "1  Connect model"),
+                (0, "1  Load model"),
                 (1, "2  Test environment"),
                 (2, "3  Ready to start"),
             ] {
@@ -417,30 +417,18 @@ impl App {
     fn model_setup(&mut self, ui: &mut egui::Ui) {
         card(ui, |ui| {
             ui.heading("How would you like to run your model?");
-            ui.label("A model app or engine loads the model onto your GPU. GPUFold sends it the selected issue and project source.");
+            ui.label("For a GGUF model, choose the file and click Load model. The model engine is included with GPUFold.");
             let before = self.settings.model_service.clone();
             ui.horizontal_wrapped(|ui| {
-                ui.selectable_value(
-                    &mut self.settings.model_service,
-                    "lm_studio".into(),
-                    "LM Studio",
-                );
+                ui.selectable_value(&mut self.settings.model_service, "file".into(), "Local GGUF file");
+                ui.selectable_value(&mut self.settings.model_service, "lm_studio".into(), "LM Studio");
                 ui.selectable_value(&mut self.settings.model_service, "ollama".into(), "Ollama");
-                ui.selectable_value(
-                    &mut self.settings.model_service,
-                    "file".into(),
-                    "My model file",
-                );
-                ui.selectable_value(
-                    &mut self.settings.model_service,
-                    "other".into(),
-                    "Other local server",
-                );
+                ui.selectable_value(&mut self.settings.model_service, "other".into(), "Other local server");
             });
             if before != self.settings.model_service {
                 self.connection_key = None;
                 self.connection_error = None;
-                self.runtime_approval = None;
+
                 self.settings.endpoint = match self.settings.model_service.as_str() {
                     "ollama" => "http://127.0.0.1:11434/v1/chat/completions",
                     "file" => "http://127.0.0.1:8080/v1/chat/completions",
@@ -448,10 +436,8 @@ impl App {
                 }
                 .into();
                 if self.settings.model_service == "file" {
-                    self.settings.runtime_kind = "llama_cpp".into();
-                    if let Some(path) = find_engine("llama-server") {
-                        self.settings.runtime_path = path.display().to_string();
-                    }
+                    self.settings.runtime_kind = "bundled".into();
+                    self.settings.runtime_path.clear();
                 }
             }
             ui.add_space(12.0);
@@ -478,57 +464,21 @@ impl App {
                 }
             }
             ui.add_space(10.0);
-            ui.label("Local server address");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.settings.endpoint)
-                    .desired_width(f32::INFINITY)
-                    .hint_text("http://127.0.0.1:1234"),
-            );
-            ui.small("Base URLs are accepted. localhost is converted to 127.0.0.1. Only this computer's loopback address is allowed.");
             if self.settings.model_service == "file" {
-                let key = runtime_approval_key(&self.settings);
-                let mut approved = self.runtime_approval.as_deref() == Some(&key);
-                if ui
-                    .checkbox(
-                        &mut approved,
-                        "Allow GPUFold to start this engine with my selected model",
-                    )
-                    .changed()
-                {
-                    self.runtime_approval = approved.then_some(key);
-                }
-                ui.collapsing("Show exact launch command", |ui| {
-                    match repair_core::runtime::launch_command(&self.settings) {
-                        Ok(command) => {
-                            ui.monospace(format!("{command:?}"));
-                        }
-                        Err(error) => {
-                            ui.label(error.to_string());
-                        }
-                    }
-                });
-                let running = self
-                    .engine
-                    .runtime
-                    .lock()
-                    .map(|mut r| r.running())
-                    .unwrap_or(false);
-                if ui
-                    .add_enabled(
-                        approved && !running,
-                        egui::Button::new("Start model and connect"),
-                    )
-                    .clicked()
-                {
+                let running = self.engine.runtime.lock().map(|mut r| r.running()).unwrap_or(false);
+                let has_model = std::path::Path::new(&self.settings.model_path).is_file();
+                if ui.add_enabled(has_model && !running, egui::Button::new("Load model").min_size(egui::vec2(180.0, 40.0))).clicked() {
                     self.start_model();
                 }
-                if running {
-                    ui.label("Your model engine is running. Use Check connection below, or stop it before choosing another model.");
-                }
-                ui.small("GPUFold waits for loading to finish and checks the connection automatically. Keep the app open while it loads.");
+                if running { ui.label("Your model is running. Stop it below before choosing another model."); }
+                ui.small("GPUFold starts its included engine and checks the connection automatically. Large models may take a few minutes to load.");
+            } else {
+                ui.label("Local server address");
+                ui.add(egui::TextEdit::singleline(&mut self.settings.endpoint).desired_width(f32::INFINITY).hint_text("http://127.0.0.1:1234"));
+                ui.small("Base URLs and localhost are accepted. The server must run on this computer.");
             }
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Check connection").clicked() {
+                if self.settings.model_service != "file" && ui.button("Check connection").clicked() {
                     self.check_model();
                 }
                 let running = self
@@ -549,7 +499,8 @@ impl App {
             });
 
             if self.model_ready() {
-                ui.colored_label(GREEN, "Connected. Choose the model you want to use:");
+                if self.settings.model_service == "file" { ui.colored_label(GREEN, "Model loaded. Continue to the next step when ready."); }
+                else { ui.colored_label(GREEN, "Connected. Choose the model you want to use:");
                 let old = self.settings.model_id.clone();
                 egui::ComboBox::from_id_salt("connected_model")
                     .selected_text(&self.settings.model_id)
@@ -564,10 +515,13 @@ impl App {
                     let _ = self.engine.store.save_settings(&self.settings);
                 }
             }
+            }
             if let Some(error) = &self.connection_error {
                 ui.add_space(10.0);
                 ui.colored_label(AMBER, "Connection needs attention");
-                ui.label(if error.contains("no model") { "The app is running, but no model is loaded. Load a coding model in your model app and check again." } else { "Make sure the model app is open, a model is loaded, and its local server is started. Check that the port above matches the app." });
+                if self.settings.model_service == "file" {
+                    ui.label("Check that the GGUF file is complete and supported by the included engine. If GPU loading fails, try CPU mode under Model options.");
+                } else { ui.label(if error.contains("no model") { "The app is running, but no model is loaded. Load a coding model in your model app and check again." } else { "Make sure the model app is open, a model is loaded, and its local server is started. Check that the port above matches the app." }); }
                 ui.collapsing("Connection details", |ui| {
                     ui.add(egui::Label::new(error).wrap().selectable(true));
                 });
@@ -586,88 +540,33 @@ impl App {
     }
 
     fn model_file_fields(&mut self, ui: &mut egui::Ui) {
-        ui.strong("Choose your engine and model");
-        ui.label("You need a separately installed model engine. For a GGUF file, choose llama.cpp's llama-server. GPUFold does not include an engine or download model weights.");
-        ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(
-                &mut self.settings.runtime_kind,
-                "llama_cpp".into(),
-                "llama.cpp (GGUF)",
-            );
-            ui.selectable_value(
-                &mut self.settings.runtime_kind,
-                "mistralrs".into(),
-                "mistral.rs",
-            );
-        });
-        ui.hyperlink_to(
-            "llama.cpp engine downloads",
-            "https://github.com/ggml-org/llama.cpp/releases",
-        );
-        ui.label("Model engine executable");
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.settings.runtime_path)
-                    .desired_width((ui.available_width() - 100.0).max(120.0))
-                    .hint_text("Select llama-server or mistralrs"),
-            );
-            if ui.button("Choose engine").clicked() {
-                if let Some(p) = rfd::FileDialog::new().pick_file() {
-                    self.settings.runtime_path = p.display().to_string();
-                }
+        ui.strong("Choose your local GGUF model");
+        ui.label("The inference engine is included. You do not need to install an engine, start a server, or enter a port.");
+        ui.label("Model file");
+        ui.add(egui::TextEdit::singleline(&mut self.settings.model_path).desired_width(f32::INFINITY).hint_text("Choose your .gguf model file"));
+        if ui.button("Choose GGUF file").clicked() {
+            if let Some(path) = rfd::FileDialog::new().add_filter("GGUF model", &["gguf"]).pick_file() {
+                self.settings.model_path = path.display().to_string();
+                self.settings.runtime_kind = "bundled".into();
+                self.settings.runtime_path.clear();
+                self.connection_key = None;
+                self.connection_error = None;
             }
-        });
-        ui.label("Local model");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings.model_path)
-                .desired_width(f32::INFINITY)
-                .hint_text("Choose your .gguf model file"),
-        );
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("Choose GGUF file").clicked() {
-                if let Some(p) = rfd::FileDialog::new()
-                    .add_filter("GGUF model", &["gguf"])
-                    .pick_file()
-                {
-                    self.settings.model_path = p.display().to_string();
-                }
-            }
-            if self.settings.runtime_kind == "mistralrs"
-                && ui.button("Choose model folder").clicked()
-            {
-                if let Some(p) = rfd::FileDialog::new().pick_folder() {
-                    self.settings.model_path = p.display().to_string();
-                }
-            }
-        });
-        ui.checkbox(
-            &mut self.settings.cpu,
-            "Use CPU instead of GPU (slower, useful if GPU memory is limited)",
-        );
-        ui.small("GPU mode requires an engine built for your GPU. A GPU-enabled build and a model that fits memory are required; selecting GPU mode alone cannot add GPU support to a CPU-only engine.");
-        if ui.button("Check model memory estimate").clicked() {
-            let path = PathBuf::from(&self.settings.model_path);
-            let context = self.settings.context_tokens + self.settings.max_output_tokens + 512;
-            self.job(move |_, _| {
-                Ok(JobResult::Message(repair_core::runtime::memory_estimate(
-                    &path, context,
-                )?))
-            });
         }
-        if let Ok(runtime) = self.engine.runtime.lock() {
-            if let Ok(log) = runtime.log.lock() {
-                ui.collapsing("Model engine log", |ui| {
-                    ui.add(egui::Label::new(log.as_str()).wrap().selectable(true));
-                });
+        ui.small("GPU acceleration uses the included Vulkan backend when a compatible GPU and driver are available. CPU mode is also included.");
+        ui.collapsing("Model options", |ui| {
+            ui.checkbox(&mut self.settings.cpu, "Use CPU only (slower; useful if GPU memory is limited)");
+            if ui.button("Estimate model memory").clicked() {
+                let path = PathBuf::from(&self.settings.model_path);
+                let context = self.settings.context_tokens + self.settings.max_output_tokens + 512;
+                self.job(move |_, _| Ok(JobResult::Message(repair_core::runtime::memory_estimate(&path, context)?)));
             }
+        });
+        if let Ok(runtime) = self.engine.runtime.lock() {
+            if let Ok(log) = runtime.log.lock() { ui.collapsing("Model loading details", |ui| { ui.add(egui::Label::new(log.as_str()).wrap().selectable(true)); }); }
         }
     }
-}
 
-fn find_engine(name: &str) -> Option<PathBuf> {
-    std::env::split_paths(&std::env::var_os("PATH")?)
-        .map(|dir| dir.join(name))
-        .find(|p| p.is_absolute() && p.is_file())
 }
 
 #[cfg(test)]
@@ -684,6 +583,29 @@ mod tests {
                 .as_nanos()
         ));
         App::new(Engine::new(Store::open(root).unwrap()))
+    }
+
+    #[test]
+    #[ignore = "requires the included engine and CI GGUF test fixture"]
+    fn gguf_setup_loads_from_a_model_path_without_an_engine_selection() {
+        let mut app = app();
+        app.settings.model_path = std::env::var("GPUFOLD_TEST_GGUF").unwrap();
+        app.settings.cpu = true;
+        app.settings.context_tokens = 128;
+        app.settings.max_output_tokens = 64;
+        assert!(app.settings.runtime_path.is_empty());
+        app.start_model();
+        let started = Instant::now();
+        while app.pending.is_some() {
+            app.observe();
+            assert!(started.elapsed() < Duration::from_secs(45), "onboarding did not finish: {}", app.message);
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(app.model_ready(), "GGUF setup failed: {:?}", app.connection_error);
+        assert!(app.settings.runtime_path.is_empty());
+        assert_eq!(app.engine.store.settings().unwrap().runtime_kind, "bundled");
+        app.engine.runtime.lock().unwrap().unload();
+        std::fs::remove_dir_all(&app.engine.store.root).unwrap();
     }
 
     #[test]
@@ -728,7 +650,7 @@ mod tests {
             serde_json::from_str(r#"{"endpoint":"http://127.0.0.1:1234/v1/chat/completions"}"#)
                 .unwrap();
         assert!(!old.setup_complete);
-        assert_eq!(old.runtime_kind, "mistralrs");
+        assert_eq!(old.runtime_kind, "bundled");
         let _ = std::fs::remove_dir_all(&app.engine.store.root);
     }
 

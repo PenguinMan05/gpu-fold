@@ -10,12 +10,13 @@ Install the latest `.deb` from [GitHub Releases](https://github.com/PenguinMan05
 
 The first launch opens **Setup & settings**:
 
-1. Choose **LM Studio**, **Ollama**, **My model file**, or another local model server. Follow the on-screen steps and check the connection. A local model app / engine and weights must be installed separately.
-2. Prepare the isolated **Test environment**, or return to this step before verifying a repair.
-3. Finish setup, paste a public Rust repository URL in **Issues**, and click **Find open issues**.
-4. Select up to 10 issues and click **Start selected issues**. Each result has its own review screen with the next step explained.
+1. Choose **Local GGUF file**, select your model, and click **Load model**. The installer includes the inference engine; no engine executable, server configuration, or extra model app is needed.
+2. GPUFold starts the engine automatically, selects a free local port, and checks when loading finishes. Vulkan GPU acceleration and CPU mode are included. GPU acceleration requires a working compatible GPU driver.
+3. Prepare the isolated **Test environment**, or return to this step before verifying a repair.
+4. Finish setup, paste a public Rust repository URL in **Issues**, and click **Find open issues**.
+5. Select up to 10 issues and click **Start selected issues**. Each result explains the next review step.
 
-See the [beginner guide and connection troubleshooting](docs/GETTING_STARTED.md). Public issues do not require GitHub sign-in. Code changes, project tests, and draft pull requests require separate review/approval.
+LM Studio, Ollama, and other local servers remain optional alternatives. Model weights are supplied by you and are never downloaded automatically. See the [beginner guide](docs/GETTING_STARTED.md). Public issues do not require GitHub sign-in.
 
 To build from source with Rust 1.90+: `bash scripts/build-linux.sh --install`. Existing `rust-repair` CLI and desktop binary names are retained for compatibility.
 
@@ -32,7 +33,7 @@ The current repair engine supports **Rust repositories with a committed `Cargo.l
 ## Requirements and limits
 
 - Linux x86-64 desktop, Git, rootless Podman, and a Secret Service keyring for optional GitHub publishing.
-- An installed local inference runtime and local model assets, unless you already run a compatible local endpoint.
+- A local GGUF model file. The .deb includes its inference engine, libraries, and CPU/Vulkan backends. Optional external model apps can also be used.
 - Repository test code runs in a rootless container with no host credentials, network, GPU, or runtime socket. Source is mounted read-only and the test copy lives in bounded container tmpfs.
 - MCP support is optional. Imported local MCP servers run with your user privileges; review definitions and allow only tools you trust. Remote MCP is disabled.
 - A person reviews and applies each proposal before deciding whether to open a PR.

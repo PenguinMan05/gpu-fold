@@ -180,8 +180,8 @@ impl Default for Settings {
             model_path: String::new(),
             model_license: String::new(),
             cpu: false,
-            runtime_kind: "mistralrs".into(),
-            model_service: "lm_studio".into(),
+            runtime_kind: "bundled".into(),
+            model_service: "file".into(),
             setup_complete: false,
             last_repository: String::new(),
         }

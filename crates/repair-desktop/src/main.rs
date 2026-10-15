@@ -84,7 +84,6 @@ struct App {
     token: String,
     device: Option<github::DeviceCode>,
     last_poll: u64,
-    runtime_approval: Option<String>,
     sandbox_consent: bool,
     context_preview: String,
     gpu_live: bool,
@@ -112,6 +111,10 @@ impl App {
             && !settings.model_path.is_empty()
         {
             settings.model_service = "file".into();
+        }
+        if settings.model_service == "file" {
+            settings.runtime_kind = "bundled".into();
+            settings.runtime_path.clear();
         }
         let settings_snapshot = serde_json::to_string(&settings).unwrap_or_default();
         let page = if settings.setup_complete {
@@ -164,7 +167,6 @@ impl App {
             token: String::new(),
             device: None,
             last_poll: 0,
-            runtime_approval: None,
             sandbox_consent: false,
             context_preview: String::new(),
             gpu_live: false,
