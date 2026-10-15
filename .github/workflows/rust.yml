@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev libxkbcommon-x11-0 libx11-dev libxi-dev libxrandr-dev libxcursor-dev libxinerama-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev xdotool
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev libxkbcommon-x11-0 libx11-dev libxi-dev libxrandr-dev libxcursor-dev libxinerama-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev xdotool dbus-x11
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -56,7 +56,7 @@ jobs:
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
-          xvfb-run --auto-servernum bash scripts/verify-desktop.sh
+          dbus-run-session -- xvfb-run --auto-servernum bash scripts/verify-desktop.sh
       - name: Package Linux app
         run: bash scripts/package-deb.sh
       - name: Install and verify package

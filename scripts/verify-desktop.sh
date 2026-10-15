@@ -3,16 +3,29 @@
   set -euo pipefail
   cd "$(dirname "${BASH_SOURCE[0]}")/.."
   mkdir -p dist
+  desktop_test_data="$(mktemp -d)"
+  export XDG_DATA_HOME="$desktop_test_data"
+  export RUST_BACKTRACE=1
   ./dist/rust-repair-desktop >dist/desktop-startup.log 2>&1 &
   app_pid=$!
-  trap 'kill "$app_pid" 2>/dev/null || true' EXIT
-  for _ in 1 2 3 4 5; do
-    sleep 1
+  trap 'kill "$app_pid" 2>/dev/null || true; rm -rf "$desktop_test_data"' EXIT
+  app_window=""
+  for _ in $(seq 1 45); do
     kill -0 "$app_pid"
+    app_window="$(xdotool search --onlyvisible --name '^GPUFold$' 2>/dev/null | head -n 1 || true)"
+    if [[ -n "$app_window" ]]; then break; fi
+    sleep 1
   done
+  if [[ -z "$app_window" ]]; then
+    ps -o pid,stat,wchan,command -p "$app_pid" > dist/desktop-process.txt
+    xwininfo -root -tree > dist/desktop-windows.txt
+    import -window root dist/desktop-preview.png
+    cat dist/desktop-startup.log dist/desktop-process.txt dist/desktop-windows.txt
+    echo "ERROR: GPUFold did not show its window within 45 seconds."
+    exit 1
+  fi
+  sleep 1
   import -window root dist/desktop-preview.png
-  app_window="$(xdotool search --onlyvisible --pid "$app_pid" | head -n 1)"
-  test -n "$app_window"
   xdotool key --window "$app_window" ctrl+1
   sleep 1
   import -window root dist/dashboard-preview.png
