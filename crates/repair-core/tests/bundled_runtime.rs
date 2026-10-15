@@ -35,8 +35,8 @@ fn included_engine_loads_a_real_gguf_generates_tokens_and_unloads() {
     let mut selected = Settings::default();
     selected.model_path = model_path;
     selected.cpu = true;
-    selected.context_tokens = 128;
-    selected.max_output_tokens = 512;
+    selected.context_tokens = 512;
+    selected.max_output_tokens = 1024;
     assert!(selected.runtime_path.is_empty());
     let settings = runtime::local_gguf_settings(&selected).unwrap();
     if std::env::var_os("GPUFOLD_TEST_INSTALLED").is_some() {
@@ -66,11 +66,15 @@ fn included_engine_loads_a_real_gguf_generates_tokens_and_unloads() {
     for (key,value) in expected.as_object().unwrap() {
         schema["properties"][key] = serde_json::json!({"const":value});
     }
-    let constrained: serde_json::Value = http.post(&settings.endpoint).json(&serde_json::json!({
+    let response = http.post(&settings.endpoint).json(&serde_json::json!({
         "model":"GPUFold-local","messages":[{"role":"user","content":format!("Return this JSON object: {expected}")}],
-        "max_tokens":512,"temperature":0.8,"seed":42,"stream":false,"reasoning_effort":"none",
+        "max_tokens":1024,"temperature":0,"seed":42,"stream":false,
         "response_format":{"type":"json_object","schema":schema}
-    })).send().unwrap().error_for_status().unwrap().json().unwrap();
+    })).send().unwrap();
+    let status = response.status();
+    let body = response.text().unwrap();
+    assert!(status.is_success(), "Schema chat HTTP {status}: {body}");
+    let constrained: serde_json::Value = serde_json::from_str(&body).unwrap();
     let content = constrained["choices"][0]["message"]["content"].as_str().expect("chat content");
     let parsed = model::parse_proposal(content).unwrap_or_else(|error| panic!("Schema-constrained chat failed: {error:#}; full reply: {constrained}"));
     assert_eq!(parsed.explanation,"Schema test");

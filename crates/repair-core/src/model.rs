@@ -113,7 +113,6 @@ impl ModelProvider for LocalHttpProvider {
                 let mut body = json!({"model":self.settings.model_id,"messages":[{"role":"system","content":SYSTEM},{"role":"user","content":prompt}],"temperature":0,"seed":42,"max_tokens":self.settings.max_output_tokens.min(8192),"stream":true});
                 if self.settings.runtime_kind == "bundled" && self.settings.model_service == "file" {
                     body["response_format"] = json!({"type":"json_object","schema":proposal_schema()});
-                    body["reasoning_effort"] = json!("none");
                 } else {
                     body["response_format"] = json!({"type":"json_schema","json_schema":{"name":"repair_proposal","strict":true,"schema":proposal_schema()}});
                 }

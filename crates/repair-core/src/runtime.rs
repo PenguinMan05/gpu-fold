@@ -164,7 +164,7 @@ pub fn launch_command(settings: &Settings) -> Result<Command> {
                 ]);
             if settings.runtime_kind == "bundled" {
                 validate_gguf_model(model)?;
-                command.args(["--alias", "GPUFold-local", "--no-webui", "--parallel", "1"]);
+                command.args(["--alias", "GPUFold-local", "--no-webui", "--parallel", "1", "--jinja"]);
                 if settings.cpu { command.args(["--device", "none"]); }
             }
         }
