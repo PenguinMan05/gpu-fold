@@ -21,6 +21,7 @@ pub struct Engine {
     pub runtime: std::sync::Arc<std::sync::Mutex<crate::runtime::ManagedRuntime>>,
     pub activity: std::sync::Arc<std::sync::Mutex<String>>,
     pub model_output: std::sync::Arc<std::sync::Mutex<String>>,
+    pub dialogue: std::sync::Arc<std::sync::Mutex<Vec<DialogueEntry>>>,
 }
 impl Engine {
     pub fn new(store: Store) -> Self {
@@ -29,9 +30,25 @@ impl Engine {
             runtime: Default::default(),
             activity: Default::default(),
             model_output: Default::default(),
+            dialogue: Default::default(),
+        }
+    }
+    pub fn conversation(&self) -> Vec<DialogueEntry> { self.dialogue.lock().map(|feed|feed.clone()).unwrap_or_default() }
+    pub fn restore_conversation(&self, entries: &[DialogueEntry]) {
+        if let Ok(mut feed)=self.dialogue.lock() { *feed=entries.iter().rev().take(160).cloned().collect::<Vec<_>>().into_iter().rev().collect(); }
+    }
+    pub fn say(&self, role: DialogueRole, text: &str) {
+        if let Ok(mut feed)=self.dialogue.lock() {
+            let text=crate::model::clip_text(text,8000);
+            if feed.last().is_some_and(|last|last.role==role && last.text==text) { return; }
+            feed.push(DialogueEntry { role, text:process::scrub(text), at:now() });
+            while feed.len()>160 || feed.iter().map(|entry|entry.text.len()).sum::<usize>()>128000 { feed.remove(0); }
         }
     }
     pub fn report_activity(&self, message: &str) {
+        if let Some(text)=message.strip_prefix("Assistant: ") { self.say(DialogueRole::Assistant,text); }
+        else if let Some(text)=message.strip_prefix("Model summary: ") { self.say(DialogueRole::Assistant,text); }
+        else { self.say(DialogueRole::Activity,message); }
         if let Ok(mut log) = self.activity.lock() {
             log.push_str(&process::scrub(message));
             log.push('\n');
@@ -45,6 +62,7 @@ impl Engine {
     pub fn clear_activity(&self) {
         if let Ok(mut log) = self.activity.lock() { log.clear(); }
         if let Ok(mut output) = self.model_output.lock() { output.clear(); }
+        if let Ok(mut feed) = self.dialogue.lock() { feed.clear(); }
     }
     fn lock(&self, r: &Run) -> Result<RunLock> {
         let file = std::fs::OpenOptions::new()
@@ -139,11 +157,14 @@ impl Engine {
             pr_url: None,
             mcp_approvals: vec![],
             tool_results: vec![],
+        inspections: vec![],
+        dialogue: vec![],
         };
         self.store.save(&r)?;
         Ok(r)
     }
     pub fn transition(&self, r: &mut Run, state: State) -> Result<()> {
+        let feed=self.conversation(); if !feed.is_empty() { r.dialogue=feed; }
         r.state = state;
         r.updated = now();
         self.store.save(r)
@@ -180,6 +201,9 @@ impl Engine {
             }
             repository::copy_tree(&r.root.join("pristine"), &work)?;
         }
+        if self.conversation().is_empty() && !r.dialogue.is_empty() { self.restore_conversation(&r.dialogue); }
+        let task_text=format!("{}/{}{}\n{}",r.owner,r.repo,r.issue_number.map(|n|format!(" #{n}")).unwrap_or_default(),model::clip_text(&r.task,3000));
+        if !self.conversation().iter().rev().find(|entry|entry.role==DialogueRole::Task).is_some_and(|entry|entry.text==task_text) { self.say(DialogueRole::Task,&task_text); }
         self.report_activity("Checking the model engine’s actual usable context window");
         let loaded_settings = model::fit_loaded_context(s)?;
         let s = &loaded_settings;
@@ -202,6 +226,21 @@ impl Engine {
                 }
             }, &mut |status| self.report_activity(status), &feedback);
             let attempt = match attempt {
+                Ok(proposal) if !proposal.tool_requests.is_empty() && proposal.tool_requests.iter().all(crate::inspection::builtin) => {
+                    let inspected=(|| -> Result<()> {
+                        for request in &proposal.tool_requests {
+                            let result=crate::inspection::execute(r,request,cancel)?;
+                            self.report_activity(&result);
+                            r.tool_results.push(process::scrub(&result));
+                            if r.tool_results.len()>8 { r.tool_results.remove(0); }
+                        }
+                        Ok(())
+                    })();
+                    Err(anyhow::Error::new(model::RetryableProposalError(match inspected {
+                        Ok(()) => "Source investigation completed. Use the requested source now included in context, inspect callers/tests if needed, then propose a supported fix.".into(),
+                        Err(error) => format!("Read-only investigation needs correction: {error:#}"),
+                    })))
+                }
                 Ok(proposal) if proposal.no_fix && r.mode == Mode::Issue => {
                     self.report_activity(&format!("Model summary: {}", model::clip_text(&process::scrub(&proposal.explanation), 1000)));
                     Err(anyhow::Error::new(model::RetryableProposalError("No supported repair yet. Inspect another source window, reconsider the issue, and either propose a supported repair or accurately explain the remaining obstacle. Never invent a fix.".into())))
@@ -214,10 +253,12 @@ impl Engine {
                     if process::check(cancel).is_err() { break Err(anyhow::anyhow!("Analysis stopped by you; saved attempts are in History")); }
                     if error.downcast_ref::<model::RetryableProposalError>().is_none() { break Err(error); }
                     failures = failures.saturating_add(1);
-                    feedback = format!("The last attempt failed validation: {error:#}. Correct this specific problem. Include every required field, especially explanation. Use exact source text and keep the reply concise.");
+                    crate::inspection::focus_rejected(r);
+                    feedback = format!("Last result: {error:#}. Re-read the implicated source shown in requested inspections. Use gpufold-source read_file/search_code for implementations, callers and tests when evidence is missing. Change the approach; do not repeat unchanged guesses. Use exact source and include all fields. Previous summary: {}", r.model_outputs.last().map(|raw| model::proposal_summary(raw)).unwrap_or_default());
                     r.notes.push(format!("Attempt {} needs revision: {error:#}", r.attempts));
                     if r.notes.len() > 64 { r.notes.drain(..r.notes.len()-64); }
                     r.updated = now();
+                    r.dialogue=self.conversation();
                     self.store.save(r)?;
                     let message = format!("Attempt {} needs revision: {error:#}", r.attempts);
                     self.report_activity(&message);
@@ -244,6 +285,7 @@ impl Engine {
         match outcome {
             Ok(p) => {
                 self.report_activity(&format!("Model summary: {}", model::clip_text(&process::scrub(&p.explanation), 1500)));
+                self.say(DialogueRole::Result,"The proposed repair passed source and scope checks. It is ready for your review; tests have not run yet.");
                 self.report_activity("Proposal passed source and scope checks. Ready for your review; tests have not run yet.");
                 r.evidence = Evidence::default();
                 r.evidence.level = if p.no_fix || !p.tool_requests.is_empty() {

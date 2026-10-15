@@ -1,4 +1,5 @@
 mod onboarding;
+mod conversation;
 
 use anyhow::Context;
 use eframe::egui;
@@ -42,6 +43,7 @@ struct QueueItemResult {
     error: Option<String>,
 }
 struct App {
+    show_conversation: bool,
     engine: Engine,
     page: Page,
     settings: Settings,
@@ -124,7 +126,9 @@ impl App {
         };
         let url = settings.last_repository.clone();
         let reconnect = settings.setup_complete;
+        if let Ok(runs)=engine.store.list() { if let Some(run)=runs.first() { engine.restore_conversation(&run.dialogue); } }
         let mut app = Self {
+            show_conversation: false,
             engine,
             page,
             settings,
@@ -246,31 +250,6 @@ impl App {
             .and_then(|r| r.map_err(|e| format!("{e:#}")));
             let _ = result_tx.send(result);
         });
-    }
-    fn task_activity(&mut self, ui: &mut egui::Ui) {
-            let activity = self.engine.activity.lock().map(|log| log.clone()).unwrap_or_default();
-            if !activity.is_empty() {
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if self.pending.is_some() { ui.spinner(); }
-                    ui.strong(if self.pending.is_some() { "Working · live activity" } else { "Last task activity" });
-                    if self.pending.is_some() && ui.button("Stop current task").clicked() {
-                        self.cancel.store(true, Ordering::SeqCst);
-                        self.message = "Stopping… Saved attempts are kept in History.".into();
-                    }
-                });
-                egui::ScrollArea::vertical().id_salt("live_activity").max_height(160.0).stick_to_bottom(true).show(ui, |ui| {
-                    ui.add(egui::Label::new(&activity).wrap().selectable(true));
-                });
-                let summary = self.engine.model_output.lock().map(|raw| repair_core::model::proposal_summary(&raw)).unwrap_or_default();
-                if !summary.is_empty() {
-                    ui.strong("Model summary");
-                    egui::ScrollArea::vertical().id_salt("live_model_summary").max_height(70.0).stick_to_bottom(true).show(ui, |ui| {
-                        ui.add(egui::Label::new(process::scrub(&summary)).wrap().selectable(true));
-                    });
-                }
-            }
-
     }
     fn observe(&mut self) {
         if let Some(progress) = &self.progress {
@@ -1642,6 +1621,7 @@ impl eframe::App for App {
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::Num3)) {
             self.page = Page::Task;
         }
+        if ctx.input_mut(|input|input.consume_key(egui::Modifiers::CTRL,egui::Key::Num4)) { self.show_conversation=!self.show_conversation; }
         ctx.request_repaint_after(std::time::Duration::from_millis(150));
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -1675,16 +1655,7 @@ impl eframe::App for App {
             }
         }
         self.navigation(ctx);
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("status_scroll")
-                .max_height(130.0)
-                .show(ui, |ui| {
-                    ui.add(egui::Label::new(&self.message).wrap().selectable(true));
-                });
-            self.task_activity(ui);
-
-        });
+        self.task_controls(ctx);
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical()
                 .id_salt(format!("page_{:?}", self.page))
@@ -1721,6 +1692,7 @@ impl eframe::App for App {
                     });
                 });
         });
+        self.conversation_window(ctx);
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         let _ = self.engine.store.save_settings(&self.settings);

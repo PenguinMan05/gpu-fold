@@ -109,6 +109,12 @@ pub struct Preflight {
     pub bytes: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SourceInspection { pub path: String, pub start_line: usize, pub line_count: usize }
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DialogueRole { Task, Assistant, Activity, Result }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DialogueEntry { pub role: DialogueRole, pub text: String, pub at: u64 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Run {
     pub id: String,
     pub created: u64,
@@ -138,6 +144,10 @@ pub struct Run {
     pub mcp_approvals: Vec<McpApproval>,
     #[serde(default)]
     pub tool_results: Vec<String>,
+    #[serde(default)]
+    pub inspections: Vec<SourceInspection>,
+    #[serde(default)]
+    pub dialogue: Vec<DialogueEntry>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]

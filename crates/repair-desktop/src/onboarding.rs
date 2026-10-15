@@ -199,18 +199,7 @@ impl App {
                 ui.separator();
                 ui.small("Rust / Cargo projects");
                 ui.small("Code stays local until you approve a draft PR.");
-                if self.pending.is_some() {
-                    ui.add_space(18.0);
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label("Working…");
-                    });
-                    if ui.button("Stop current task").clicked() {
-                        self.cancel.store(true, Ordering::SeqCst);
-                        // Inference cancellation does not require shutting down an external model app.
-                        self.message = "Stopping… Saved results are kept in History.".into();
-                    }
-                }
+
             });
     }
 
@@ -617,12 +606,34 @@ mod tests {
         *app.engine.model_output.lock().unwrap() = "{\"explanation\":\"Checking the arithmetic replacement".into();
         let ctx = egui::Context::default();
         let output = ctx.run(egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(760.0,560.0))), ..Default::default() }, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| app.task_activity(ui));
+            egui::CentralPanel::default().show(ctx, |ui| app.conversation_body(ui));
         });
         let shapes = format!("{:?}", output.shapes);
-        assert!(shapes.contains("Working") && shapes.contains("Attempt 4") && shapes.contains("Checking the arithmetic"));
+        assert!(shapes.contains("Activity") && shapes.contains("Attempt 4") && shapes.contains("Checking the arithmetic"));
         drop(tx);
         std::fs::remove_dir_all(&app.engine.store.root).unwrap();
+    }
+
+    #[test]
+    fn conversation_is_opened_on_demand_and_controls_are_on_the_right_without_a_footer() {
+        let mut app=app(); let (tx,rx)=mpsc::channel(); app.pending=Some(rx);
+        app.engine.report_activity("Inspecting the stylus implementation");
+        app.engine.say(repair_core::types::DialogueRole::Assistant,"The issue is in the input event translation.");
+        let ctx=egui::Context::default();
+        for open in [false,true] {
+            app.show_conversation=open;
+            let output=ctx.run(egui::RawInput {screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(1100.0,800.0))),..Default::default()},|ctx| {
+                app.task_controls(ctx);
+                egui::CentralPanel::default().show(ctx,|ui| { ui.label("Workspace"); });
+                app.conversation_window(ctx);
+            });
+            let rendered=format!("{:?}",output.shapes);
+            assert!(rendered.contains("AI conversation") && rendered.contains("Stop current task"));
+            assert!(!rendered.contains("Working · live activity"));
+            if open { assert!(rendered.contains("input event translation")); }
+            else { assert!(!rendered.contains("input event translation")); }
+        }
+        drop(tx); std::fs::remove_dir_all(&app.engine.store.root).unwrap();
     }
 
     #[test]

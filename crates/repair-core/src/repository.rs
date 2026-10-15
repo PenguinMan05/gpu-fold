@@ -272,6 +272,8 @@ fn create_inner(
         pr_url: None,
         mcp_approvals: vec![],
         tool_results: vec![],
+        inspections: vec![],
+        dialogue: vec![],
     })
 }
 pub fn scan(root: &Path) -> Result<Preflight> {

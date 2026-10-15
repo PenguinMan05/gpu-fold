@@ -6,7 +6,7 @@
 4. Wait for **Model loaded**. GPUFold includes the inference engine and starts it automatically. No engine executable, separate server, or port configuration is needed.
 5. Continue through setup. **Test environment** downloads the isolated Rust test image after approval. You can prepare this later, before verifying repairs.
 6. Open **Issues**, paste a public Rust / Cargo repository URL, and click **Find open issues**. Select up to 10 and click **Start selected issues**.
-7. Watch **Working · live activity** below the status message for source scope, project guidance, generation, validation, and retry feedback. **Model summary** streams the model’s brief explanation. Failed attempts get another queue turn automatically; Stop current task cancels generation or retry waits.
+7. Click **AI conversation** in the right-side task controls (above **Stop current task**) for a dialogue feed of the task, model replies, source inspection, and revisions. Ctrl+4 opens or closes the feed. There is no bottom activity panel. Failed attempts get another queue turn automatically; Stop current task cancels generation or retry waits.
 8. Open each result and follow its review instructions. Review the model's explanation and changed files, apply the local patch, then approve the isolated tests. GitHub sign-in is needed only if you later publish a draft pull request.
 
 ## Model options
@@ -30,3 +30,5 @@ Malformed proposal JSON, incorrect source citations, truncated responses, and un
 The included engine supplies the GGUF tokenizer automatically. GPUFold fits excerpts of source, issue text, project instructions, and feedback into the configured input window. It can rebalance input/output within the already loaded model window after a truncated response. A larger context can still help large tasks; increasing it requires stopping and reloading the model.
 
 Project AI guidance is read from the pinned repository, including applicable nested AGENTS.md files, skill documents, Copilot instructions, and editor rules. Names and source scope appear in live activity. Guidance is bounded by context space, cannot grant command execution or credential access, and does not bypass your review. Retries cannot guarantee that a model can solve every issue; unresolved work continues until you stop it.
+
+The model can use built-in read-only file and code-search tools to investigate missing evidence. It receives the requested source in its next attempt. Exact source snippets with mistaken line numbers are anchored automatically; fabricated or ambiguous source claims are still rejected. Conversations are saved with the run.

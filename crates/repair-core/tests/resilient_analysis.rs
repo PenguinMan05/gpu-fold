@@ -211,3 +211,65 @@ fn actual_engine_window_overrides_a_larger_requested_context() {
     assert!(fitted.context_tokens>=512 && fitted.max_output_tokens>=256);
     server.join().unwrap();
 }
+
+#[test]
+fn a_wrong_citation_line_is_anchored_to_unique_exact_source_without_another_model_call() {
+    let mut fixture=Fixture::new(); let mut reply=good(); reply["citations"][0]["start_line"]=json!(13);
+    let (settings,server)=server(vec![reply]);
+    fixture.engine.analyze_once(&mut fixture.run,&settings,&process::cancel_token()).unwrap();
+    assert_eq!(fixture.run.attempts,1);
+    assert_eq!(fixture.run.proposal.as_ref().unwrap().citations[0].start_line,1);
+    assert!(fixture.engine.conversation().iter().any(|entry|entry.text.contains("anchored citation")));
+    server.join().unwrap();
+}
+
+#[test]
+fn source_reads_are_executed_read_only_and_supplied_to_the_following_attempt() {
+    let mut fixture=Fixture::new();
+    std::fs::write(fixture.run.root.join("pristine/src/secondary.rs"),"pub fn related_behavior() -> bool { true }\n").unwrap();
+    let investigate=json!({"explanation":"I will inspect the related implementation before choosing a fix.","citations":[],"planned_files":[],"edits":[],"reproduction":null,"no_fix":false,"tool_requests":[{"server":"gpufold-source","name":"read_file","arguments":{"path":"src/secondary.rs","start_line":1,"line_count":80}}]});
+    let (settings,server)=server(vec![investigate,good()]);
+    assert!(fixture.engine.analyze_once(&mut fixture.run,&settings,&process::cancel_token()).unwrap_err().downcast_ref::<model::RetryableProposalError>().is_some());
+    assert_eq!(fixture.run.inspections[0].path,"src/secondary.rs");
+    fixture.engine.analyze_once(&mut fixture.run,&settings,&process::cancel_token()).unwrap();
+    let requests=server.join().unwrap(); let second=requests[1]["messages"][1]["content"].as_str().unwrap();
+    assert!(second.contains("requested inspection") && second.contains("related_behavior"));
+    assert_eq!(fixture.run.state,State::AwaitPlan);
+    assert!(fixture.run.dialogue.iter().any(|entry|entry.role==DialogueRole::Assistant && entry.text.contains("inspect the related")));
+    assert!(fixture.run.dialogue.iter().any(|entry|entry.text.contains("Opened src/secondary.rs")));
+}
+
+#[test]
+fn source_search_finds_call_sites_and_cannot_execute_queries_or_escape_the_snapshot() {
+    use repair_core::inspection;
+    let mut fixture=Fixture::new();
+    let request=ToolRequest { server:inspection::SERVER.into(),name:"search_code".into(),arguments:json!({"query":"add","path_prefix":"src"}).as_object().unwrap().clone() };
+    let result=inspection::execute(&mut fixture.run,&request,&process::cancel_token()).unwrap();
+    assert!(result.contains("src/lib.rs:1"));
+    let outside=ToolRequest { name:"read_file".into(),arguments:json!({"path":"../../etc/passwd"}).as_object().unwrap().clone(),..request.clone() };
+    assert!(inspection::execute(&mut fixture.run,&outside,&process::cancel_token()).is_err());
+    let sentinel=fixture.root.join("must-not-exist");
+    let literal=ToolRequest { arguments:json!({"query":format!("$(touch {})",sentinel.display())}).as_object().unwrap().clone(),..request };
+    inspection::execute(&mut fixture.run,&literal,&process::cancel_token()).unwrap();
+    assert!(!sentinel.exists());
+}
+
+#[test]
+fn citation_repair_does_not_accept_invented_or_ambiguous_source() {
+    use repair_core::inspection;
+    let fixture=Fixture::new(); let root=fixture.run.root.join("pristine");
+    let mut proposal:Proposal=serde_json::from_value(good()).unwrap();
+    let original=std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+    std::fs::write(root.join("src/lib.rs"),format!("{original}{original}")).unwrap();
+    proposal.citations[0].start_line=13;
+    assert!(inspection::anchor_citations(&root,&mut proposal,&["src/lib.rs".into()]).unwrap().is_empty());
+    assert_eq!(proposal.citations[0].start_line,13);
+    proposal.citations[0].snippet="invented source".into();
+    assert!(inspection::anchor_citations(&root,&mut proposal,&["src/lib.rs".into()]).unwrap().is_empty());
+    assert!(repair_core::validation::validate_proposal(&root,&proposal).is_err());
+    std::fs::write(root.join("src/lib.rs"),&original).unwrap();
+    proposal.citations[0].snippet=format!("13: {}",original.trim_end());
+    inspection::anchor_citations(&root,&mut proposal,&["src/lib.rs".into()]).unwrap();
+    assert_eq!(proposal.citations[0].snippet,original.trim_end());
+    assert_eq!(proposal.citations[0].start_line,1);
+}

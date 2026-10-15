@@ -1,20 +1,15 @@
-## GPUFold 0.4.1 — persistent analysis and live activity
+## GPUFold 0.5.0 — source investigation and AI conversation
 
-- Fix missing proposal fields by supplying an actual JSON schema to the included engine, including the required explanation field. Optional external providers use schema mode when supported and fall back to plain JSON mode.
-- Automatically retry malformed JSON, invalid citations, unsupported repair attempts, and interrupted/truncated generation with corrective feedback. Remove the three-attempt cutoff. Failed queue attempts rotate behind other tickets, so one difficult issue does not block all other selected work.
-- Show a visible live activity panel below the status message: source scope, applicable instruction files, generation, validation, errors, retries, and the model’s brief explanation. Stop is available in the activity panel.
-- Read the engine’s actual model context limit and use the bundled model tokenizer automatically. Fit source and issue excerpts into the input window, and rebalance input/output within the loaded model window when output is truncated. No tokenizer.json is required for GGUF use.
-- Include scoped AGENTS.md, skills.md / SKILL.md, CLAUDE.md, GEMINI.md, Copilot instruction files, and editor rules in model context. Project guidance cannot bypass execution, credential, or review controls.
-- Bound retained prompts/outputs and activity while preserving the total attempt count and saved state. Existing run histories remain readable.
+- Move task controls to the right side. AI conversation sits above Stop current task. Remove the bottom activity panel and the duplicate controls in the left sidebar.
+- Open a separate, scrollable dialogue feed with task messages, brief model replies, source reads/searches, revisions, and results. Replies stream in the panel; prior replies are retained and saved with run history. Ctrl+4 toggles it.
+- Give the model built-in read-only source tools: read_file and search_code, limited to the pinned repository. It can inspect implementations, callers, manifests, tests, and project guidance before producing a patch. These tools never run commands or access the network.
+- Refocus rejected attempts on the implicated source and include the prior model summary with concrete correction feedback. Source inspection requests get fresh evidence rather than repeating a blind generation.
+- Automatically correct citation line numbers only when the full snippet matches unique exact pinned source (or already matches its stated location). Invented or ambiguous snippets remain rejected. Verified edits, existing-test protection, sandbox approval, and draft-PR review remain enforced.
 
-## Installation
+Install the uniquely named .deb on x86-64 Ubuntu 24.04 / Linux Mint 22 generation systems (glibc 2.39+). The inference engine remains included: select a local coding GGUF and click Load model.
 
-Install the uniquely named .deb on x86-64 Ubuntu 24.04 / Linux Mint 22 generation systems (glibc 2.39+). Open GPUFold, select the GGUF, and click Load model. The pinned llama.cpp Vulkan/CPU engine remains included. Your normal compatible GPU driver is needed for GPU acceleration.
+Verification covers exact citation anchoring, rejection of invented/ambiguous citations, read-only tool dispatch, focused source on subsequent attempts, shell/traversal rejection, saved conversations, the right-side controls, on-demand dialogue rendering, real GGUF tokenization/schema generation, native desktop screenshots, isolated repair fixtures, and package installation.
 
-## Verification and limits
+Model repair quality still depends on the chosen coding model. This improves investigation and retry behavior; it does not guarantee every ticket can be solved. A proposal still goes through human review and test approval. The current repair pipeline supports Rust/Cargo repositories with Cargo.lock; the peer GPU network remains unimplemented.
 
-Regression checks cover repeated missing-explanation responses beyond three attempts, feedback-driven citation repair, unresolved queue turns, cancellation during retry waits, oversized issue/source fitting, scoped project instructions, bounded activity, and older history records. The real GGUF test checks tokenization and schema-constrained chat output as well as loading, generation, and unloading, before and after package installation. Desktop launch, isolated fail-before/pass-after repair tests, and package installation must pass before publication.
-
-The tiny model verifies the inference interface, not real-world coding quality. CI has no physical GPU. A local model cannot be guaranteed to solve every issue; unresolved analysis retries until stopped. Applying code, running project tests, and publishing still require review. This build supports Rust/Cargo repositories with Cargo.lock; the peer-to-peer GPU network remains unimplemented.
-
-The toy CI GGUF declares only 128 context tokens. The protocol test expands that fixture copy’s declared context to 2048 after checksum verification, without changing tensor weights; it does not evaluate coding quality or modify user models. Inference pipeline failures now block publication.
+The toy CI GGUF uses a declared 2048-token context solely for protocol testing; weights stay unchanged and it is not shipped. CI has no physical GPU.

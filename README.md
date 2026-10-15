@@ -24,9 +24,10 @@ To build from source with Rust 1.90+: `bash scripts/build-linux.sh --install`. E
 
 - Linux desktop and CLI, persistent run history, cancellation, and per-ticket review.
 - Public GitHub issue scanning with pagination, pull-request exclusion, unassigned filtering, and a queue of up to 10 tickets per batch.
-- Schema-constrained local proposals, automatic correction retries, live activity and model summaries, and fair queue turns for unresolved tickets.
+- Schema-constrained local proposals, automatic correction retries, a separate AI conversation feed and model summaries, and fair queue turns for unresolved tickets.
 - Automatic GGUF token counting and source-context fitting, without a separate tokenizer file.
 - Scoped project guidance from AGENTS.md, SKILL.md / skills.md, CLAUDE.md, GEMINI.md, Copilot instructions, and editor rules.
+- Built-in read-only file/code search for model-led source investigation, focused revision context, and unique exact citation anchoring.
 - Bounded Rust proposal validation and an isolated, offline Cargo test sandbox.
 - Explicit review and verification before publishing a draft pull request.
 
