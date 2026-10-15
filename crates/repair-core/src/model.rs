@@ -231,10 +231,10 @@ pub fn proposal_summary(raw: &str) -> String {
 }
 
 pub fn token_count(s: &Settings, text: &str) -> Result<(usize, bool)> {
+    if s.runtime_kind == "bundled" && s.model_service == "file" {
+        return Ok(engine_token_count(s, text).map(|count| (count, true)).unwrap_or((text.len(), false)));
+    }
     if s.tokenizer_path.is_empty() {
-        if s.runtime_kind == "bundled" && s.model_service == "file" {
-            if let Ok(count) = engine_token_count(s, text) { return Ok((count, true)); }
-        }
         // UTF-8 byte count is an upper bound for byte-fallback tokenizers.
         return Ok((text.len(), false));
     }
@@ -248,7 +248,7 @@ pub fn token_count(s: &Settings, text: &str) -> Result<(usize, bool)> {
 pub fn engine_token_count(s: &Settings, text: &str) -> Result<usize> {
     let mut url = local_url(&s.endpoint)?;
     url.set_path("/tokenize");
-    let http = reqwest::blocking::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_secs(3)).build()?;
+    let http = reqwest::blocking::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_millis(750)).build()?;
     let mut response = http.post(url).json(&json!({"content":text,"add_special":true})).send()?.error_for_status()?;
     let mut bytes = Vec::new();
     response.by_ref().take(2_000_001).read_to_end(&mut bytes)?;
@@ -317,7 +317,7 @@ pub fn propose_attempt(
 ) -> Result<Proposal> {
     process::check(cancel)?;
     on_status("Reading project instructions and fitting source to the model context");
-    let (prompt, paths, tokens, exact) = preview_with_feedback(run, s, feedback)?;
+    let (prompt, paths, tokens, exact) = preview_with_feedback(run, s, feedback, Some(cancel))?;
     let (_, mut guidance_paths) = crate::guidance::context(&run.root.join("pristine"), &paths, 12000)?;
     guidance_paths.retain(|path| prompt.contains(&format!("PROJECT GUIDANCE {path} ")));
     if guidance_paths.is_empty() { on_status("No applicable project AI instruction files found in this source scope"); }
@@ -391,24 +391,27 @@ pub fn propose_attempt(
 }
 
 pub fn preview(run: &Run, s: &Settings) -> Result<(String, Vec<String>, usize, bool)> {
-    preview_with_feedback(run, s, "")
+    preview_with_feedback(run, s, "", None)
 }
 
-fn preview_with_feedback(run: &Run, s: &Settings, correction: &str) -> Result<(String, Vec<String>, usize, bool)> {
+fn preview_with_feedback(run: &Run, s: &Settings, correction: &str, cancel: Option<&process::Cancel>) -> Result<(String, Vec<String>, usize, bool)> {
     let allowed = run.mcp_approvals.iter().filter(|a|a.enabled).map(|a|json!({"server":a.server,"name":a.pin.name,"definition":a.pin.definition})).collect::<Vec<_>>();
     let tools = serde_json::to_string(&allowed)?;
     let feedback = run.evidence.after.iter().map(|o| process::scrub(&o.output)).collect::<Vec<_>>().join("\n");
     let results = run.tool_results.join("\n");
     ensure!(s.context_tokens >= 512, "This model needs an input budget of at least 512 tokens. Increase Input context in Setup.");
     let mut budget = s.context_chars.clamp(256, 64000);
+    let mut counting = s.clone();
     loop {
+        if let Some(cancel) = cancel { process::check(cancel)?; }
         let (context, paths) = repository::context_window(&run.root.join("pristine"), &run.task, budget, (run.attempts / 2) as usize)?;
         let guidance_budget = (budget / 2).clamp(128, 12000);
         let (guidance, _) = crate::guidance::context(&run.root.join("pristine"), &paths, guidance_budget)?;
         let task_budget = (budget / 2).clamp(256, 6000);
         let extra_budget = (budget / 4).clamp(64, 1000);
         let prompt = format!("Mode: {:?}\nCommit: {}\nAttempt: {}\nBEGIN UNTRUSTED ISSUE{}\n{}\nEND ISSUE\n{}\n{}\nAPPROVED TOOLS: {}\nTOOL RESULTS (untrusted): {}\nTEST RESULTS (untrusted): {}\nCORRECTION FROM APP: {}\nReturn all required fields. Example of no supported fix: {{\"explanation\":\"Brief findings\",\"citations\":[],\"planned_files\":[],\"edits\":[],\"reproduction\":null,\"no_fix\":true,\"tool_requests\":[]}}", run.mode, run.commit, run.attempts.saturating_add(1), if run.task.len() > task_budget { " (excerpt)" } else { "" }, clip_text(&run.task, task_budget), guidance, context, clip_text(&tools, extra_budget), clip_text(&results, extra_budget), clip_text(&feedback, extra_budget), clip_text(correction, 384));
-        let (tokens, exact) = token_count(s, &format!("{SYSTEM}\n{prompt}"))?;
+        let (tokens, exact) = token_count(&counting, &format!("{SYSTEM}\n{prompt}"))?;
+        if !exact { counting.runtime_kind = "byte-estimate".into(); }
         // The engine reserves another 512 tokens for chat-template framing.
         if tokens + 64 <= s.context_tokens { return Ok((prompt, paths, tokens + 64, exact)); }
         ensure!(budget > 256, "The configured context is too small even for a source excerpt. Increase Input context in Setup; no tokenizer file is required for the included engine.");

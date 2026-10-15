@@ -383,6 +383,7 @@ pub fn context_window(root: &Path, task: &str, max_chars: usize, offset: usize) 
         }
     }
     files.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    let source_file_count = files.len().max(1);
     if !files.is_empty() { let shift = offset % files.len(); files.rotate_left(shift); }
     let mut out = format!("FILE MAP (untrusted)\n{map}\n");
     let mut selected = vec![];
@@ -396,17 +397,19 @@ pub fn context_window(root: &Path, task: &str, max_chars: usize, offset: usize) 
                 .iter()
                 .position(|l| terms.iter().any(|t| l.to_lowercase().contains(t)))
                 .unwrap_or(0);
-            anchor.saturating_sub(15)
+            let start = anchor.saturating_sub(15);
+            (start + (offset / source_file_count) * 40) % lines.len().max(1)
         } else {
             0
         };
         let header = format!("\nBEGIN UNTRUSTED SOURCE {path}\n");
         let footer = "END UNTRUSTED SOURCE\n";
         let mut block = header;
+        let file_limit = (max_chars / 2).max(256);
         // Fit complete source lines rather than dropping an entire file when it is large.
         for (i, line) in lines.iter().enumerate().skip(start) {
             let numbered = format!("{}: {}\n", i + 1, line);
-            if out.len() + block.len() + numbered.len() + footer.len() > max_chars {
+            if out.len() + block.len() + numbered.len() + footer.len() > max_chars || block.len() + numbered.len() + footer.len() > file_limit {
                 if block.ends_with(&format!("{path}\n")) {
                     let available = max_chars.saturating_sub(out.len() + block.len() + footer.len() + 1);
                     if available > 32 { block.push_str(crate::model::clip_text(&numbered, available)); block.push('\n'); }

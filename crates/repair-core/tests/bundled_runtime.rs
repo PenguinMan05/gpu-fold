@@ -57,7 +57,9 @@ fn included_engine_loads_a_real_gguf_generates_tokens_and_unloads() {
     let result: serde_json::Value = http.post(url).json(&serde_json::json!({"prompt":"Once upon a time","n_predict":8,"temperature":0,"seed":42})).send().unwrap().error_for_status().unwrap().json().unwrap();
     assert!(!result["content"].as_str().unwrap_or_default().is_empty(), "no model text: {result}");
     assert!(result["tokens_predicted"].as_u64().or_else(|| result["timings"]["predicted_n"].as_u64()).unwrap_or(0) > 0, "no generated tokens: {result}");
-    let (count, exact) = model::token_count(&settings, "A real model tokenizer counts this sentence.").unwrap();
+    let mut counted_settings = settings.clone();
+    counted_settings.tokenizer_path = "/does-not-exist/tokenizer.json".into();
+    let (count, exact) = model::token_count(&counted_settings, "A real model tokenizer counts this sentence.").unwrap();
     assert!(exact && count > 0, "the included engine must supply its own tokenizer");
     let expected = serde_json::json!({"explanation":"Schema test","citations":[],"planned_files":[],"edits":[],"reproduction":null,"no_fix":true,"tool_requests":[]});
     let mut schema = model::proposal_schema();

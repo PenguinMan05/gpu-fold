@@ -173,3 +173,15 @@ fn live_logs_and_attempt_history_remain_bounded_and_old_saved_attempts_deseriali
     let mut run:Run=serde_json::from_value(old).unwrap(); run.attempts+=1;
     assert_eq!(run.attempts,256);
 }
+
+#[test]
+fn unresolved_attempts_explore_another_window_of_a_large_source_file() {
+    let fixture = Fixture::new();
+    let source = (0..200).map(|i| format!("pub fn item_{i}() -> usize {{ {i} }}\n")).collect::<String>();
+    std::fs::write(fixture.run.root.join("pristine/src/lib.rs"),source).unwrap();
+    let (first,_) = repository::context_window(&fixture.run.root.join("pristine"),"investigate a bug",1000,0).unwrap();
+    let (later,_) = repository::context_window(&fixture.run.root.join("pristine"),"investigate a bug",1000,1).unwrap();
+    assert!(first.contains("item_0()"));
+    assert!(later.contains("item_40()"));
+    assert_ne!(first,later);
+}

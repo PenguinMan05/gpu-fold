@@ -186,7 +186,7 @@ impl Engine {
         let mut feedback = r.notes.iter().rev().find(|note| note.contains("needs revision:")).cloned().unwrap_or_default();
         if feedback.contains("truncat") || feedback.contains("length") {
             let total = s.context_tokens.saturating_add(s.max_output_tokens);
-            settings.max_output_tokens = settings.max_output_tokens.saturating_mul(2).min(8192).min(total.saturating_sub(1024)).max(s.max_output_tokens);
+            settings.max_output_tokens = settings.max_output_tokens.saturating_mul(1usize << r.attempts.min(3)).min(8192).min(total.saturating_sub(1024)).max(s.max_output_tokens);
             settings.context_tokens = total.saturating_sub(settings.max_output_tokens);
         }
         let mut failures = 0usize;

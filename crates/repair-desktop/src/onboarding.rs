@@ -609,6 +609,23 @@ mod tests {
     }
 
     #[test]
+    fn live_activity_and_partial_model_summary_render_at_minimum_window_size() {
+        let mut app = app();
+        let (tx, rx) = mpsc::channel();
+        app.pending = Some(rx);
+        app.engine.report_activity("Attempt 4: checking citations after a malformed JSON response");
+        *app.engine.model_output.lock().unwrap() = "{\"explanation\":\"Checking the arithmetic replacement".into();
+        let ctx = egui::Context::default();
+        let output = ctx.run(egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(760.0,560.0))), ..Default::default() }, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| app.task_activity(ui));
+        });
+        let shapes = format!("{:?}", output.shapes);
+        assert!(shapes.contains("Working") && shapes.contains("Attempt 4") && shapes.contains("Checking the arithmetic"));
+        drop(tx);
+        std::fs::remove_dir_all(&app.engine.store.root).unwrap();
+    }
+
+    #[test]
     fn new_install_opens_setup_and_model_readiness_is_never_assumed() {
         let mut app = app();
         assert_eq!(app.page, Page::Settings);

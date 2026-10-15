@@ -247,6 +247,31 @@ impl App {
             let _ = result_tx.send(result);
         });
     }
+    fn task_activity(&mut self, ui: &mut egui::Ui) {
+            let activity = self.engine.activity.lock().map(|log| log.clone()).unwrap_or_default();
+            if !activity.is_empty() {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if self.pending.is_some() { ui.spinner(); }
+                    ui.strong(if self.pending.is_some() { "Working · live activity" } else { "Last task activity" });
+                    if self.pending.is_some() && ui.button("Stop current task").clicked() {
+                        self.cancel.store(true, Ordering::SeqCst);
+                        self.message = "Stopping… Saved attempts are kept in History.".into();
+                    }
+                });
+                egui::ScrollArea::vertical().id_salt("live_activity").max_height(160.0).stick_to_bottom(true).show(ui, |ui| {
+                    ui.add(egui::Label::new(&activity).wrap().selectable(true));
+                });
+                let summary = self.engine.model_output.lock().map(|raw| repair_core::model::proposal_summary(raw)).unwrap_or_default();
+                if !summary.is_empty() {
+                    ui.strong("Model summary");
+                    egui::ScrollArea::vertical().id_salt("live_model_summary").max_height(70.0).stick_to_bottom(true).show(ui, |ui| {
+                        ui.add(egui::Label::new(process::scrub(&summary)).wrap().selectable(true));
+                    });
+                }
+            }
+
+    }
     fn observe(&mut self) {
         if let Some(progress) = &self.progress {
             while let Ok(status) = progress.try_recv() {
@@ -1657,28 +1682,7 @@ impl eframe::App for App {
                 .show(ui, |ui| {
                     ui.add(egui::Label::new(&self.message).wrap().selectable(true));
                 });
-            let activity = self.engine.activity.lock().map(|log| log.clone()).unwrap_or_default();
-            if !activity.is_empty() {
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if self.pending.is_some() { ui.spinner(); }
-                    ui.strong(if self.pending.is_some() { "Working · live activity" } else { "Last task activity" });
-                    if self.pending.is_some() && ui.button("Stop current task").clicked() {
-                        self.cancel.store(true, Ordering::SeqCst);
-                        self.message = "Stopping… Saved attempts are kept in History.".into();
-                    }
-                });
-                egui::ScrollArea::vertical().id_salt("live_activity").max_height(160.0).stick_to_bottom(true).show(ui, |ui| {
-                    ui.add(egui::Label::new(&activity).wrap().selectable(true));
-                });
-                let summary = self.engine.model_output.lock().map(|raw| repair_core::model::proposal_summary(raw)).unwrap_or_default();
-                if !summary.is_empty() {
-                    ui.strong("Model summary");
-                    egui::ScrollArea::vertical().id_salt("live_model_summary").max_height(70.0).stick_to_bottom(true).show(ui, |ui| {
-                        ui.add(egui::Label::new(process::scrub(&summary)).wrap().selectable(true));
-                    });
-                }
-            }
+            self.task_activity(ui);
 
         });
         egui::CentralPanel::default().show(ctx, |ui| {

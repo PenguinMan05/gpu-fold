@@ -23,7 +23,7 @@ fn applies(path: &str, text: &str, source: &[String]) -> bool {
             });
         }
     }
-    if lower.starts_with('.') || lower.ends_with("/skill.md") || !path.contains('/') {
+    if lower.starts_with(".github/instructions/") || lower == ".github/copilot-instructions.md" || lower.starts_with(".cursor/rules/") || lower.starts_with(".windsurf/rules/") || lower.ends_with("/skill.md") || !path.contains('/') {
         return true;
     }
     let parent = path.rsplit_once('/').map(|p| format!("{}/", p.0)).unwrap_or_default();
@@ -49,7 +49,8 @@ pub fn context(root: &Path, source: &[String], budget: usize) -> Result<(String,
     for (path, text) in files {
         if per_file < 24 { break; }
         let text = crate::model::clip_text(&text, per_file);
-        let block = format!("\nPROJECT GUIDANCE {path} (scope: its directory; skills are optional guidance)\n{text}\nEND GUIDANCE\n");
+        let scope = if path.starts_with('.') || !path.contains('/') || path.to_ascii_lowercase().ends_with("/skill.md") { "repository conventions; skills are optional" } else { path.rsplit_once('/').map_or("repository", |(parent,_)| parent) };
+        let block = format!("\nPROJECT GUIDANCE {path} (scope: {scope})\n{text}\nEND GUIDANCE\n");
         if out.len() + block.len() > budget { break; }
         out.push_str(&block);
         included.push(path);
