@@ -67,12 +67,12 @@ fn included_engine_loads_a_real_gguf_generates_tokens_and_unloads() {
         schema["properties"][key] = serde_json::json!({"const":value});
     }
     let constrained: serde_json::Value = http.post(&settings.endpoint).json(&serde_json::json!({
-        "model":"GPUFold-local","messages":[{"role":"user","content":"Return the JSON object required by the grammar."}],
-        "max_tokens":512,"temperature":0,"stream":false,
+        "model":"GPUFold-local","messages":[{"role":"user","content":format!("Return this JSON object: {expected}")}],
+        "max_tokens":512,"temperature":0.8,"seed":42,"stream":false,"reasoning_effort":"none",
         "response_format":{"type":"json_object","schema":schema}
     })).send().unwrap().error_for_status().unwrap().json().unwrap();
     let content = constrained["choices"][0]["message"]["content"].as_str().expect("chat content");
-    let parsed = model::parse_proposal(content).unwrap();
+    let parsed = model::parse_proposal(content).unwrap_or_else(|error| panic!("Schema-constrained chat failed: {error:#}; full reply: {constrained}"));
     assert_eq!(parsed.explanation,"Schema test");
     assert!(parsed.no_fix);
     println!("PASS: bundled tokenizer and actual schema-constrained chat completion include all proposal fields.");

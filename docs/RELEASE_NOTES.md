@@ -1,4 +1,4 @@
-## GPUFold 0.4.0 — persistent analysis and live activity
+## GPUFold 0.4.1 — persistent analysis and live activity
 
 - Fix missing proposal fields by supplying an actual JSON schema to the included engine, including the required explanation field. Optional external providers use schema mode when supported and fall back to plain JSON mode.
 - Automatically retry malformed JSON, invalid citations, unsupported repair attempts, and interrupted/truncated generation with corrective feedback. Remove the three-attempt cutoff. Failed queue attempts rotate behind other tickets, so one difficult issue does not block all other selected work.

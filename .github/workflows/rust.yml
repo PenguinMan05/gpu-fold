@@ -6,6 +6,22 @@ on:
 permissions:
   contents: read
 jobs:
+  retire-incomplete-preview:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Withdraw the preview whose integration test was masked by a pipeline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if target="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.4.0" --jq .target_commitish 2>/dev/null)"; then
+            if [[ "$target" == '9fd88fd9f78c10bbcaaf8abb182488eb73915910' ]]; then
+              gh release edit v0.4.0 --draft --repo "$GITHUB_REPOSITORY"
+            fi
+          fi
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -35,7 +51,10 @@ jobs:
       - name: Engine regression tests
         run: cargo test --locked --workspace
       - name: Verify real GGUF inference with no external engine path
-        run: bash scripts/verify-gguf.sh | tee dist/gguf-inference.txt
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/verify-gguf.sh | tee dist/gguf-inference.txt
       - name: Check workspace
         run: cargo check --locked --workspace
       - name: Build CLI and desktop
@@ -77,7 +96,10 @@ jobs:
       - name: Verify the installed GGUF engine actually generates tokens
         env:
           GPUFOLD_TEST_INSTALLED: '1'
-        run: bash scripts/verify-gguf.sh | tee dist/installed-gguf-inference.txt
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/verify-gguf.sh | tee dist/installed-gguf-inference.txt
       - name: Upload binaries and resolved lockfile
         uses: actions/upload-artifact@v4
         with:
