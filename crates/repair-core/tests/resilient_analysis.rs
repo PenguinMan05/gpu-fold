@@ -273,3 +273,14 @@ fn citation_repair_does_not_accept_invented_or_ambiguous_source() {
     assert_eq!(proposal.citations[0].snippet,original.trim_end());
     assert_eq!(proposal.citations[0].start_line,1);
 }
+
+#[test]
+fn citation_anchoring_preserves_real_indentation_without_fuzzy_code_matching() {
+    let fixture=Fixture::new(); let root=fixture.run.root.join("pristine");
+    let mut p:Proposal=serde_json::from_value(good()).unwrap();
+    std::fs::write(root.join("src/lib.rs"),"impl Example {\n    fn stylus() { exact_behavior(); }\n}\n").unwrap();
+    p.citations[0].snippet="fn stylus() { exact_behavior(); }".into(); p.citations[0].start_line=13;
+    repair_core::inspection::anchor_citations(&root,&mut p,&["src/lib.rs".into()]).unwrap();
+    assert_eq!(p.citations[0].start_line,2);
+    assert_eq!(p.citations[0].snippet,"    fn stylus() { exact_behavior(); }");
+}

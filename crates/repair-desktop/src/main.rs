@@ -1578,7 +1578,8 @@ impl App {
                         ))
                         .clicked()
                     {
-                        self.run = Some(r);
+                        self.engine.restore_conversation(&r.dialogue);
+                            self.run = Some(r);
                         self.reviewed.clear();
                         self.confirm_publish = false;
                         self.page = Page::Review;

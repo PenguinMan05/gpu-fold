@@ -110,7 +110,7 @@ impl ModelProvider for LocalHttpProvider {
         rt.block_on(async {
             let request = async {
                 let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).no_proxy().timeout(Duration::from_secs(600)).build()?;
-                let mut body = json!({"model":self.settings.model_id,"messages":[{"role":"system","content":SYSTEM},{"role":"user","content":prompt}],"temperature":0.15,"seed":prompt.bytes().fold(42u64, |hash, byte| hash.wrapping_mul(31).wrapping_add(byte as u64)),"max_tokens":self.settings.max_output_tokens.min(8192),"stream":true});
+                let mut body = json!({"model":self.settings.model_id,"messages":[{"role":"system","content":SYSTEM},{"role":"user","content":prompt}],"temperature":0.15,"seed":prompt.bytes().fold(42u32, |hash, byte| hash.wrapping_mul(31).wrapping_add(byte as u32)),"max_tokens":self.settings.max_output_tokens.min(8192),"stream":true});
                 if self.settings.runtime_kind == "bundled" && self.settings.model_service == "file" {
                     body["response_format"] = json!({"type":"json_object","schema":proposal_schema()});
                 } else {

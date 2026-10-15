@@ -128,13 +128,19 @@ pub fn anchor_citations(root: &Path, proposal: &mut Proposal, allowed: &[String]
         let stripped=original.lines().map(|line|prefix.replace(line,"").into_owned()).collect::<Vec<_>>().join("\n");
         for candidate in [original.as_str(),stripped.as_str()] {
             if candidate.is_empty() { continue; }
-            let matches=source.match_indices(candidate).filter(|(at,_)|*at==0 || source.as_bytes()[at-1]==b'\n').map(|(at,_)|at).collect::<Vec<_>>();
+            let matches=source.match_indices(candidate).filter_map(|(at,_)| {
+                let start=source[..at].rfind('\n').map_or(0,|line|line+1);
+                source[start..at].chars().all(|c|c==' ' || c=='\t').then_some((at,start))
+            }).collect::<Vec<_>>();
             // A citation already correct at the specified line needs no disambiguation.
             let correct=source.lines().skip(citation.start_line.saturating_sub(1)).collect::<Vec<_>>().join("\n").starts_with(candidate) && citation.start_line>0;
             if correct || matches.len()==1 {
-                let line=if correct {citation.start_line} else { source[..matches[0]].bytes().filter(|b|*b==b'\n').count()+1 };
-                if line!=citation.start_line || candidate!=citation.snippet { notes.push(format!("Verified exact source in {} and anchored citation at line {line}",citation.path)); }
-                citation.start_line=line; citation.snippet=candidate.to_owned(); break;
+                let (line,canonical)=if correct { (citation.start_line,candidate.to_owned()) } else {
+                    let (at,start)=matches[0];
+                    (source[..start].bytes().filter(|b|*b==b'\n').count()+1,format!("{}{candidate}",&source[start..at]))
+                };
+                if line!=citation.start_line || canonical!=citation.snippet { notes.push(format!("Verified exact source in {} and anchored citation at line {line}",citation.path)); }
+                citation.start_line=line; citation.snippet=canonical; break;
             }
         }
     }

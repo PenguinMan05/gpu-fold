@@ -4,7 +4,7 @@ use repair_core::types::{DialogueEntry,DialogueRole};
 impl App {
     fn conversation_entries(&self) -> Vec<DialogueEntry> {
         let live=self.engine.conversation();
-        if !live.is_empty() { return live; }
+        if !live.is_empty() || self.pending.is_some() { return live; }
         self.run.as_ref().map(|run|run.dialogue.clone()).unwrap_or_default()
     }
     pub(super) fn task_controls(&mut self, ctx: &egui::Context) {
