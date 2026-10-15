@@ -257,6 +257,29 @@ pub fn engine_token_count(s: &Settings, text: &str) -> Result<usize> {
     Ok(data["tokens"].as_array().context("Engine did not return token IDs")?.len())
 }
 
+/// Respect the engine's actual per-slot window, which may be below the requested size.
+pub fn fit_loaded_context(s: &Settings) -> Result<Settings> {
+    if s.runtime_kind != "bundled" || s.model_service != "file" { return Ok(s.clone()); }
+    let window = (|| -> Result<Option<usize>> {
+        let mut url = local_url(&s.endpoint)?; url.set_path("/v1/models");
+        let http = reqwest::blocking::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_millis(750)).build()?;
+        let mut response = http.get(url).send()?.error_for_status()?;
+        let mut bytes = Vec::new(); response.by_ref().take(2_000_001).read_to_end(&mut bytes)?;
+        ensure!(bytes.len() <= 2_000_000, "Model metadata exceeds cap");
+        let data: serde_json::Value = serde_json::from_slice(&bytes)?;
+        Ok(data["data"].as_array().and_then(|models| models.iter().find(|m| m["id"].as_str() == Some(s.model_id.as_str())).or_else(|| models.first())).and_then(|m| m["meta"]["n_ctx"].as_u64()).map(|n| n as usize))
+    })().ok().flatten();
+    let Some(window) = window else { return Ok(s.clone()); };
+    let available = window.saturating_sub(512);
+    ensure!(available >= 768, "This model exposes only {window} context tokens, too few for a repair proposal. Load a coding GGUF with a larger context window.");
+    let requested = s.context_tokens.saturating_add(s.max_output_tokens);
+    if requested <= available { return Ok(s.clone()); }
+    let mut fitted = s.clone();
+    fitted.context_tokens = ((s.context_tokens as u128 * available as u128 / requested.max(1) as u128) as usize).max(512).min(available-256);
+    fitted.max_output_tokens = available - fitted.context_tokens;
+    Ok(fitted)
+}
+
 pub fn health(s: &Settings) -> Result<String> {
     Ok(available_models(s)?.join(", "))
 }

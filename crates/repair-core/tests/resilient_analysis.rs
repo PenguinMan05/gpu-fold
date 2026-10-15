@@ -196,3 +196,18 @@ fn an_empty_issue_fix_is_retried_instead_of_being_reported_as_done() {
     assert!(!fixture.run.proposal.as_ref().unwrap().edits.is_empty());
     server.join().unwrap();
 }
+
+#[test]
+fn actual_engine_window_overrides_a_larger_requested_context() {
+    let listener=TcpListener::bind("127.0.0.1:0").unwrap(); let address=listener.local_addr().unwrap();
+    let server=std::thread::spawn(move || {
+        let (mut socket,_)=listener.accept().unwrap(); let mut request=[0;4096]; socket.read(&mut request).unwrap();
+        let body=json!({"data":[{"id":"local","meta":{"n_ctx":2048}}]}).to_string();
+        write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+    });
+    let mut selected=Settings::default(); selected.endpoint=format!("http://{address}/v1/chat/completions");
+    let fitted=model::fit_loaded_context(&selected).unwrap();
+    assert_eq!(fitted.context_tokens+fitted.max_output_tokens,1536);
+    assert!(fitted.context_tokens>=512 && fitted.max_output_tokens>=256);
+    server.join().unwrap();
+}

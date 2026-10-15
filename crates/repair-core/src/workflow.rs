@@ -180,6 +180,9 @@ impl Engine {
             }
             repository::copy_tree(&r.root.join("pristine"), &work)?;
         }
+        self.report_activity("Checking the model engine’s actual usable context window");
+        let loaded_settings = model::fit_loaded_context(s)?;
+        let s = &loaded_settings;
         self.transition(r, State::Analyzing)?;
         self.report_activity(&format!("Working on {}/{}{}", r.owner, r.repo, r.issue_number.map(|n| format!(" #{n}")).unwrap_or_default()));
         let mut settings = s.clone();

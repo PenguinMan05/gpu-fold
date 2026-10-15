@@ -9,3 +9,5 @@ Release archive SHA-256: `e5eaae62de38776a837d1f415a461dd334342c1a247073c51a065e
 `llama.cpp-LICENSE.txt` contains the upstream MIT license. The bundle script also preserves any license/notice files in the upstream archive. The engine's source code remains available at the pinned upstream commit; it is not represented as GPUFold's Rust implementation.
 
 The tiny GGUF used in CI is downloaded from the pinned ggml-org/tiny-llamas commit and verified by SHA-256. It is not shipped in the installer and is not a coding model recommendation.
+
+For the schema/chat protocol test, CI changes only the downloaded toy fixture’s declared `llama.context_length` from 128 to 2048, after verifying the upstream checksum. Tensor weights stay unchanged; this lets its decoder emit the complete proposal schema without evaluating repair quality or modifying user models. The fixture is never included in the installer.
